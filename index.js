@@ -13,8 +13,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { getTokenCountAsync, getTextTokens, getFriendlyTokenizerName, tokenizers } from '../../../tokenizers.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
-import { getChatCompletionModel, oai_settings } from '../../../openai.js';
-import { textgenerationwebui_settings as textgen_settings } from '../../../textgen-settings.js';
+import { getGeneratingModel } from '../../../../script.js';
 
 const extensionName = 'token-usage-tracker';
 
@@ -172,32 +171,6 @@ async function countTokens(text) {
         console.error('[Token Usage Tracker] Error counting tokens:', error);
         // Ultimate fallback: character-based estimate
         return Math.ceil(text.length / 3.35);
-    }
-}
-
-/**
- * Get the current model ID based on the active API
- * @returns {string} Model identifier
- */
-function getCurrentModelId() {
-    try {
-        if (main_api === 'openai') {
-            const model = getChatCompletionModel();
-            return model || oai_settings?.custom_model || 'unknown-openai';
-        }
-        if (main_api === 'textgenerationwebui') {
-            return textgen_settings?.model || 'unknown-textgen';
-        }
-        if (main_api === 'novel') {
-            return 'novelai';
-        }
-        if (main_api === 'kobold') {
-            return 'kobold';
-        }
-        return main_api || 'unknown';
-    } catch (e) {
-        console.warn('[Token Usage Tracker] Error getting model ID:', e);
-        return 'unknown';
     }
 }
 
@@ -482,7 +455,7 @@ function handleGenerateAfterData(generate_data, dryRun) {
     if (dryRun) return;
 
     // Capture model ID synchronously (fast)
-    pendingModelId = getCurrentModelId();
+    pendingModelId = getGeneratingModel();
 
     // Start token counting but DON'T await - let it run in parallel with the API request
     pendingInputTokensPromise = countInputTokens(generate_data)
@@ -1689,7 +1662,7 @@ function patchConnectionManager() {
                 }
 
                 let inputTokens = 0;
-                const modelId = getCurrentModelId();
+                const modelId = getGeneratingModel();
 
                 try {
                     isTrackingBackground = true;
@@ -1745,7 +1718,7 @@ async function handleBackgroundGeneration(originalFn, context, args, inputCounte
 
     let result;
     let inputTokens = 0;
-    const modelId = getCurrentModelId();
+    const modelId = getGeneratingModel();
 
     try {
         isTrackingBackground = true;
