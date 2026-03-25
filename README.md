@@ -11,14 +11,14 @@ A SillyTavern extension that tracks and visualizes token usage and price for you
 - **Model Breakdown**: See token usage and costs per AI model
 - **Interactive Chart**: Visual bar chart with daily token usage breakdown
 
-&lt;details&gt;
-&lt;summary&gt;🆕 New Features (click to expand)&lt;/summary&gt;
+<details>
+<summary>🆕 New Features (click to expand)</summary>
 
 ![Extension Screenshot 1](1.png)
 
 ![Extension Screenshot 2](2.png)
 
-&lt;/details&gt;
+</details>
 
 ## Installation
 
