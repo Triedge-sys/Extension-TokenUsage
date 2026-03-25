@@ -1888,8 +1888,8 @@ async function showCurrencySelector() {
     // Popular currencies first, then alphabetical
     const popularCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'RUB', 'KRW', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'PLN', 'UAH', 'KZT'];
     const sortedCurrencies = [
-        ...popularCurrencies.filter(c => currencies.includes(c)),
-        ...currencies.filter(c => !popularCurrencies.includes(c))
+        ...popularCurrencies.filter(c => currencies.includes(c.toLowerCase())),
+        ...currencies.filter(c => !popularCurrencies.some(p => p.toLowerCase() === c)).sort()
     ];
 
     sortedCurrencies.forEach(currency => {
