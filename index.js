@@ -22,6 +22,8 @@ const defaultSettings = {
     modelColors: {}, // { "gpt-4o": "#6366f1", "claude-3-opus": "#8b5cf6", ... }
     // Prices per 1M tokens: { "gpt-4o": { in: 2.5, out: 10 }, ... }
     modelPrices: {},
+    // Selected currency
+    currency: 'USD',
     // Accumulated usage data
     usage: {
         session: { input: 0, output: 0, total: 0, messageCount: 0, startTime: null },
@@ -62,6 +64,9 @@ function loadSettings() {
     // Initialize modelPrices
     if (!settings.modelPrices) settings.modelPrices = {};
 
+    // Initialize currency
+    if (!settings.currency) settings.currency = 'USD';
+
     // Migration: Convert byDay.models from numeric format to object format
     // Old: models[modelId] = totalTokens (number)
     // New: models[modelId] = { input, output, total }
@@ -101,6 +106,156 @@ function saveSettings() {
  */
 function getSettings() {
     return extension_settings[extensionName];
+}
+
+/**
+ * Currency rates cache
+ * Loaded from API and cached in memory for the session
+ */
+let currencyRatesCache = null;
+let currencyCacheDate = null;
+const CURRENCY_API_URL = 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json';
+
+/**
+ * Load currency rates from API with in-memory caching
+ * Rates are cached for 24 hours to avoid unnecessary requests
+ * @returns {Promise<Object|null>} Currency rates object or null on error
+ */
+async function loadCurrencyRates() {
+    const today = new Date().toDateString();
+    
+    // Return cached rates if still valid (same day)
+    if (currencyRatesCache && currencyCacheDate === today) {
+        console.log('[Token Usage Tracker] Using cached currency rates');
+        return currencyRatesCache;
+    }
+    
+    try {
+        console.log('[Token Usage Tracker] Fetching currency rates from API...');
+        const response = await fetch(CURRENCY_API_URL);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        // Cache the rates and date
+        currencyRatesCache = data.usd || {};
+        currencyCacheDate = new Date().toDateString();
+        
+        console.log(`[Token Usage Tracker] Loaded ${Object.keys(currencyRatesCache).length} currency rates`);
+        return currencyRatesCache;
+    } catch (error) {
+        console.error('[Token Usage Tracker] Error loading currency rates:', error);
+        // Return cached rates even if expired, if available
+        if (currencyRatesCache) {
+            console.log('[Token Usage Tracker] Using expired cached rates due to fetch error');
+            return currencyRatesCache;
+        }
+        return null;
+    }
+}
+
+/**
+ * Get available currencies from loaded rates
+ * @returns {string[]} Array of currency codes
+ */
+function getAvailableCurrencies() {
+    if (!currencyRatesCache) return [];
+    return Object.keys(currencyRatesCache).sort();
+}
+
+/**
+ * Convert USD amount to selected currency
+ * @param {number} usdAmount - Amount in USD
+ * @param {string} targetCurrency - Target currency code
+ * @returns {number} Amount in target currency
+ */
+function convertUSDtoCurrency(usdAmount, targetCurrency) {
+    if (targetCurrency === 'USD') return usdAmount;
+    if (!currencyRatesCache) return usdAmount;
+    
+    const rate = currencyRatesCache[targetCurrency.toLowerCase()];
+    if (!rate) {
+        console.warn(`[Token Usage Tracker] No rate found for currency: ${targetCurrency}`);
+        return usdAmount;
+    }
+    
+    return usdAmount * rate;
+}
+
+/**
+ * Format currency amount with appropriate symbol/notation
+ * @param {number} amount - Amount
+ * @param {string} currency - Currency code
+ * @returns {string} Formatted string
+ */
+function formatCurrency(amount, currency) {
+    const symbols = {
+        'USD': '$',
+        'EUR': '€',
+        'GBP': '£',
+        'JPY': '¥',
+        'CNY': '¥',
+        'RUB': '₽',
+        'KRW': '₩',
+        'INR': '₹',
+        'BRL': 'R$',
+        'AUD': 'A$',
+        'CAD': 'C$',
+        'CHF': 'Fr',
+        'HKD': 'HK$',
+        'SGD': 'S$',
+        'SEK': 'kr',
+        'NOK': 'kr',
+        'DKK': 'kr',
+        'PLN': 'zł',
+        'TRY': '₺',
+        'ZAR': 'R',
+        'MXN': '$',
+        'ARS': '$',
+        'CLP': '$',
+        'COP': '$',
+        'PEN': 'S/',
+        'UYU': '$U',
+        'THB': '฿',
+        'VND': '₫',
+        'IDR': 'Rp',
+        'MYR': 'RM',
+        'PHP': '₱',
+        'AED': 'د.إ',
+        'SAR': '﷼',
+        'ILS': '₪',
+        'EGP': 'E£',
+        'NGN': '₦',
+        'KES': 'KSh',
+        'GHS': '₵',
+        'UAH': '₴',
+        'KZT': '₸',
+        'UZS': "so'm",
+        'AZN': '₼',
+        'GEL': '₾',
+        'AMD': '֏',
+        'BYN': 'Br',
+        'MDL': 'L',
+        'RON': 'lei',
+        'BGN': 'лв',
+        'RSD': 'дин.',
+        'HRK': 'kn',
+        'CZK': 'Kč',
+        'HUF': 'Ft',
+        'ISK': 'kr',
+        'TWD': 'NT$',
+        'NZD': 'NZ$',
+        'FJD': 'FJ$',
+    };
+    
+    const symbol = symbols[currency] || currency + ' ';
+    const formatted = amount.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4
+    });
+    
+    return symbol + formatted;
 }
 
 /**
@@ -1074,7 +1229,7 @@ function renderChart() {
             style: 'cursor: pointer;'
         });
 
-        cursor.addEventListener('mouseenter', () => {
+        cursor.addEventListener('mouseenter', async () => {
             cursor.setAttribute('fill', CHART_COLORS.cursor);
             showTooltip(d);
         });
@@ -1207,10 +1362,25 @@ function showTooltip(d) {
         modelBreakdown += '</div>';
     }
 
+    // Calculate cost for this day
+    let dayCost = 0;
+    if (d.models) {
+        for (const [mid, modelData] of Object.entries(d.models)) {
+            const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+            const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+            dayCost += calculateCost(mInput, mOutput, mid);
+        }
+    }
+
+    const settings = getSettings();
+    const selectedCurrency = settings.currency || 'USD';
+    const costDisplay = dayCost > 0 ? formatCurrency(convertUSDtoCurrency(dayCost, selectedCurrency), selectedCurrency) : formatCurrency(0, selectedCurrency);
+
     tooltip.innerHTML = `
         <div style="font-weight: 600; margin-bottom: 2px; color: var(--SmartThemeBodyColor);">${d.fullDate}</div>
         <div style="color: var(--SmartThemeBodyColor);">${formatNumberFull(d.usage)} tokens</div>
         <div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.6;">${formatNumberFull(d.input)} in / ${formatNumberFull(d.output)} out</div>
+        <div style="font-size: 10px; color: #4ade80;">Cost: ${costDisplay}</div>
         ${modelBreakdown}
     `;
     tooltip.style.display = 'block';
@@ -1272,6 +1442,8 @@ function updateChartRange(range) {
 function updateUIStats() {
     const stats = getUsageStats();
     const now = new Date();
+    const settings = getSettings();
+    const selectedCurrency = settings.currency || 'USD';
 
     // Today header
     $('#token-usage-today-total').text(formatTokens(stats.today.total));
@@ -1285,14 +1457,15 @@ function updateUIStats() {
 
     // Cost calculations
     const allTimeCost = calculateAllTimeCost();
+    const convertedAllTimeCost = convertUSDtoCurrency(allTimeCost, selectedCurrency);
 
-    if (allTimeCost > 0) {
-        $('#token-usage-alltime-cost').text(`$${allTimeCost.toFixed(2)}`);
+    if (convertedAllTimeCost > 0) {
+        $('#token-usage-alltime-cost').text(formatCurrency(convertedAllTimeCost, selectedCurrency));
     } else {
-        $('#token-usage-alltime-cost').text('$0.00');
+        $('#token-usage-alltime-cost').text(formatCurrency(0, selectedCurrency));
     }
 
-    // For Week/Month: We iterate all `byDay` keys and match those that belong to current week/month
+    // For Week/Month/Today: Calculate from byDay data
     const currentWeekKey = getWeekKey(now);
     const currentMonthKey = getMonthKey(now);
     const todayKey = getDayKey(now);
@@ -1301,44 +1474,38 @@ function updateUIStats() {
     let monthCost = 0;
     let todayCost = 0;
 
-    const settings = getSettings();
     for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
         // Parse dayKey (YYYY-MM-DD) as local date, not UTC
-        // new Date("2026-01-01") interprets as UTC, which shifts timezone
         const [year, month, day] = dayKey.split('-').map(Number);
         const date = new Date(year, month - 1, day);
 
+        // Calculate cost for this day using per-model input/output breakdown
+        let dayCost = 0;
+        if (data.models) {
+            for (const [mid, modelData] of Object.entries(data.models)) {
+                const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                dayCost += calculateCost(mInput, mOutput, mid);
+            }
+        }
+
         // Week check
         if (getWeekKey(date) === currentWeekKey) {
-            // Calculate cost for this day using per-model input/output breakdown
-            if (data.models) {
-                for (const [mid, modelData] of Object.entries(data.models)) {
-                    // modelData is now { input, output, total } (or number for legacy data)
-                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
-                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
-                    const cost = calculateCost(mInput, mOutput, mid);
-                    weekCost += cost;
-                    if (dayKey === todayKey) {
-                        todayCost += cost;
-                    }
-                }
+            weekCost += dayCost;
+            if (dayKey === todayKey) {
+                todayCost += dayCost;
             }
         }
         // Month check
         if (getMonthKey(date) === currentMonthKey) {
-             if (data.models) {
-                 for (const [mid, modelData] of Object.entries(data.models)) {
-                     const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
-                     const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
-                     monthCost += calculateCost(mInput, mOutput, mid);
-                 }
-            }
+            monthCost += dayCost;
         }
     }
 
-    $('#token-usage-week-cost').text(`$${weekCost.toFixed(2)}`);
-    $('#token-usage-month-cost').text(`$${monthCost.toFixed(2)}`);
-    $('#token-usage-today-cost').text(`$${todayCost.toFixed(2)}`);
+    // Convert to selected currency
+    $('#token-usage-week-cost').text(formatCurrency(convertUSDtoCurrency(weekCost, selectedCurrency), selectedCurrency));
+    $('#token-usage-month-cost').text(formatCurrency(convertUSDtoCurrency(monthCost, selectedCurrency), selectedCurrency));
+    $('#token-usage-today-cost').text(formatCurrency(convertUSDtoCurrency(todayCost, selectedCurrency), selectedCurrency));
 
     $('#token-usage-tokenizer').text('Tokenizer: ' + (stats.tokenizer || 'Unknown'));
 
@@ -1504,6 +1671,11 @@ function createSettingsUI() {
                     <div style="display: flex; align-items: center; gap: 8px; padding-left: 8px;">
                         <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.4;" id="token-usage-tokenizer">Tokenizer: ${stats.tokenizer || 'Unknown'}</div>
                         <div style="flex: 1;"></div>
+                        <label style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.7; cursor: pointer;">
+                            <input type="checkbox" id="token-usage-currency-toggle" style="width: 12px; height: 12px; cursor: pointer;">
+                            Select currency
+                        </label>
+                        <div style="flex: 1;"></div>
                         <div id="token-usage-reset-all" class="menu_button" title="Reset all stats" style="color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 11px; white-space: nowrap;">
                             <i class="fa-solid fa-trash"></i>&nbsp;Reset All
                         </div>
@@ -1554,8 +1726,35 @@ function createSettingsUI() {
         }
     });
 
+    // Currency toggle checkbox handler
+    const currencyToggle = document.getElementById('token-usage-currency-toggle');
+    if (currencyToggle) {
+        currencyToggle.checked = settings.currency !== 'USD';
+        currencyToggle.addEventListener('change', async () => {
+            console.log('[Token Usage Tracker] Currency toggle clicked:', currencyToggle.checked);
+            
+            if (currencyToggle.checked) {
+                // Load currency rates if not already loaded
+                if (!currencyRatesCache) {
+                    await loadCurrencyRates();
+                }
+                
+                // Show currency selection UI
+                showCurrencySelector();
+            } else {
+                // Reset to USD
+                settings.currency = 'USD';
+                saveSettings();
+                updateUIStats();
+                console.log('[Token Usage Tracker] Currency reset to USD');
+            }
+        });
+    }
+
     // Subscribe to updates
-    eventSource.on('tokenUsageUpdated', updateUIStats);
+    eventSource.on('tokenUsageUpdated', () => {
+        updateUIStats();
+    });
 
     // Handle container resize with ResizeObserver (handles panel width changes)
     const chartContainer = document.getElementById('token-usage-chart');
@@ -1580,6 +1779,177 @@ function createSettingsUI() {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(renderChart, 100);
     });
+    
+    // Initialize UI stats
+    updateUIStats();
+}
+
+/**
+ * Show currency selector dropdown
+ */
+function showCurrencySelector() {
+    const settings = getSettings();
+    const currencies = getAvailableCurrencies();
+
+    if (currencies.length === 0) {
+        console.error('[Token Usage Tracker] No currencies available');
+        toastr.error('Failed to load currency list');
+        return;
+    }
+
+    // Create or get existing selector container
+    let selectorContainer = document.getElementById('token-usage-currency-selector');
+
+    if (selectorContainer) {
+        // Toggle visibility
+        if (selectorContainer.style.display === 'none') {
+            selectorContainer.style.display = 'flex';
+            // Update selected value when reopening
+            const select = selectorContainer.querySelector('select');
+            if (select) {
+                select.value = settings.currency;
+            }
+        } else {
+            selectorContainer.style.display = 'none';
+        }
+        return;
+    }
+    
+    selectorContainer = document.createElement('div');
+    selectorContainer.id = 'token-usage-currency-selector';
+    selectorContainer.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+        margin-top: 8px;
+        background: var(--SmartThemeInputColor);
+        border: 1px solid var(--SmartThemeBorderColor);
+        border-radius: 6px;
+    `;
+    
+    // Create label
+    const label = document.createElement('span');
+    label.textContent = 'Currency:';
+    label.style.cssText = 'font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.8; white-space: nowrap;';
+    
+    // Create select dropdown
+    const select = document.createElement('select');
+    select.style.cssText = `
+        padding: 4px 8px;
+        font-size: 10px;
+        border-radius: 4px;
+        border: 1px solid var(--SmartThemeBorderColor);
+        background: var(--SmartThemeInputColor);
+        color: var(--SmartThemeBodyColor);
+        max-width: 200px;
+        cursor: pointer;
+    `;
+    
+    // Popular currencies first, then alphabetical
+    const popularCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'RUB', 'KRW', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'PLN', 'UAH', 'KZT'];
+    const sortedCurrencies = [
+        ...popularCurrencies.filter(c => currencies.includes(c)),
+        ...currencies.filter(c => !popularCurrencies.includes(c))
+    ];
+    
+    sortedCurrencies.forEach(currency => {
+        const option = document.createElement('option');
+        option.value = currency;
+        option.textContent = currency;
+        if (currency === settings.currency) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+    
+    // Save button
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    saveBtn.className = 'menu_button';
+    saveBtn.style.cssText = `
+        padding: 4px 12px;
+        font-size: 10px;
+        border-radius: 4px;
+        background: var(--SmartThemeButtonColor);
+        color: var(--SmartThemeBodyColor);
+        border: 1px solid var(--SmartThemeBorderColor);
+        cursor: pointer;
+        white-space: nowrap;
+    `;
+    
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.className = 'menu_button';
+    closeBtn.style.cssText = `
+        padding: 4px 10px;
+        font-size: 12px;
+        border-radius: 4px;
+        background: var(--SmartThemeInputColor);
+        color: var(--SmartThemeBodyColor);
+        border: 1px solid var(--SmartThemeBorderColor);
+        cursor: pointer;
+        white-space: nowrap;
+    `;
+    
+    // Save on button click
+    saveBtn.addEventListener('click', () => {
+        const selectedCurrency = select.value;
+        settings.currency = selectedCurrency;
+        saveSettings();
+        updateUIStats();
+        console.log(`[Token Usage Tracker] Currency set to ${selectedCurrency}`);
+        toastr.success(`Currency changed to ${selectedCurrency}`);
+
+        // Update rate display
+        updateRateDisplay();
+    });
+    
+    // Close on button click
+    closeBtn.addEventListener('click', () => {
+        selectorContainer.style.display = 'none';
+    });
+    
+    // Update rate display when selection changes
+    select.addEventListener('change', () => {
+        updateRateDisplay();
+    });
+    
+    /**
+     * Update the exchange rate display
+     */
+    function updateRateDisplay() {
+        const selectedCurrency = select.value;
+        const rate = currencyRatesCache ? (currencyRatesCache[selectedCurrency.toLowerCase()] || 1) : 1;
+        
+        let rateEl = selectorContainer.querySelector('.currency-rate-display');
+        if (!rateEl) {
+            rateEl = document.createElement('span');
+            rateEl.className = 'currency-rate-display';
+            rateEl.style.cssText = 'font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.6; white-space: nowrap; margin-left: 4px;';
+            selectorContainer.appendChild(rateEl);
+        }
+        rateEl.textContent = `1 USD = ${rate} ${selectedCurrency}`;
+    }
+    
+    // Assemble
+    selectorContainer.appendChild(label);
+    selectorContainer.appendChild(select);
+    selectorContainer.appendChild(saveBtn);
+    selectorContainer.appendChild(closeBtn);
+    
+    // Insert after currency toggle
+    const currencyToggle = document.getElementById('token-usage-currency-toggle');
+    if (currencyToggle) {
+        const toggleLabel = currencyToggle.closest('label');
+        if (toggleLabel) {
+            toggleLabel.parentElement.insertBefore(selectorContainer, toggleLabel.nextSibling);
+        }
+    }
+    
+    // Show initial rate
+    updateRateDisplay();
 }
 
 /**
