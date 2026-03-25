@@ -1364,23 +1364,29 @@ function showTooltip(d) {
 
     // Calculate cost for this day
     let dayCost = 0;
+    const dayModelIds = [];
     if (d.models) {
         for (const [mid, modelData] of Object.entries(d.models)) {
             const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
             const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
             dayCost += calculateCost(mInput, mOutput, mid);
+            dayModelIds.push(mid);
         }
     }
 
     const settings = getSettings();
     const selectedCurrency = settings.currency || 'USD';
-    const costDisplay = dayCost > 0 ? formatCurrency(convertUSDtoCurrency(dayCost, selectedCurrency), selectedCurrency) : formatCurrency(0, selectedCurrency);
+    // Check if ALL models used today have prices set
+    const dayModelsHavePrice = dayModelIds.length > 0 && dayModelIds.every(modelId => {
+        return settings.modelPrices[modelId] !== undefined;
+    });
+    const costDisplay = !dayModelsHavePrice ? 'Set model prices' : (dayCost > 0 ? formatCurrency(convertUSDtoCurrency(dayCost, selectedCurrency), selectedCurrency) : formatCurrency(0, selectedCurrency));
 
     tooltip.innerHTML = `
         <div style="font-weight: 600; margin-bottom: 2px; color: var(--SmartThemeBodyColor);">${d.fullDate}</div>
         <div style="color: var(--SmartThemeBodyColor);">${formatNumberFull(d.usage)} tokens</div>
         <div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.6;">${formatNumberFull(d.input)} in / ${formatNumberFull(d.output)} out</div>
-        <div style="font-size: 10px; color: #4ade80;">Cost: ${costDisplay}</div>
+        <div style="font-size: 10px; color: ${!dayModelsHavePrice ? '#fbbf24' : '#4ade80'};">Cost: ${costDisplay}</div>
         ${modelBreakdown}
     `;
     tooltip.style.display = 'block';
@@ -1455,11 +1461,19 @@ function updateUIStats() {
     $('#token-usage-month-total').text(formatTokens(stats.thisMonth.total));
     $('#token-usage-alltime-total').text(formatTokens(stats.allTime.total));
 
+    // Check if any model used has prices set (for All Time)
+    const allTimeModels = Object.keys(settings.usage.byModel || {});
+    const allModelsHavePrice = allTimeModels.length > 0 && allTimeModels.every(modelId => {
+        return settings.modelPrices[modelId] !== undefined;
+    });
+
     // Cost calculations
     const allTimeCost = calculateAllTimeCost();
     const convertedAllTimeCost = convertUSDtoCurrency(allTimeCost, selectedCurrency);
 
-    if (convertedAllTimeCost > 0) {
+    if (!allModelsHavePrice) {
+        $('#token-usage-alltime-cost').text('Set model prices');
+    } else if (convertedAllTimeCost > 0) {
         $('#token-usage-alltime-cost').text(formatCurrency(convertedAllTimeCost, selectedCurrency));
     } else {
         $('#token-usage-alltime-cost').text(formatCurrency(0, selectedCurrency));
@@ -1473,11 +1487,28 @@ function updateUIStats() {
     let weekCost = 0;
     let monthCost = 0;
     let todayCost = 0;
+    let weekModels = [];
+    let monthModels = [];
+    let todayModels = [];
 
     for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
         // Parse dayKey (YYYY-MM-DD) as local date, not UTC
         const [year, month, day] = dayKey.split('-').map(Number);
         const date = new Date(year, month - 1, day);
+
+        // Collect models for each period
+        if (data.models) {
+            const modelIds = Object.keys(data.models);
+            if (getWeekKey(date) === currentWeekKey) {
+                weekModels = weekModels.concat(modelIds);
+            }
+            if (getMonthKey(date) === currentMonthKey) {
+                monthModels = monthModels.concat(modelIds);
+            }
+            if (dayKey === todayKey) {
+                todayModels = todayModels.concat(modelIds);
+            }
+        }
 
         // Calculate cost for this day using per-model input/output breakdown
         let dayCost = 0;
@@ -1502,10 +1533,39 @@ function updateUIStats() {
         }
     }
 
-    // Convert to selected currency
-    $('#token-usage-week-cost').text(formatCurrency(convertUSDtoCurrency(weekCost, selectedCurrency), selectedCurrency));
-    $('#token-usage-month-cost').text(formatCurrency(convertUSDtoCurrency(monthCost, selectedCurrency), selectedCurrency));
-    $('#token-usage-today-cost').text(formatCurrency(convertUSDtoCurrency(todayCost, selectedCurrency), selectedCurrency));
+    // Remove duplicates
+    weekModels = [...new Set(weekModels)];
+    monthModels = [...new Set(monthModels)];
+    todayModels = [...new Set(todayModels)];
+
+    // Check if models in each period have prices set
+    const weekModelsHavePrice = weekModels.length > 0 && weekModels.every(modelId => {
+        return settings.modelPrices[modelId] !== undefined;
+    });
+    const monthModelsHavePrice = monthModels.length > 0 && monthModels.every(modelId => {
+        return settings.modelPrices[modelId] !== undefined;
+    });
+    const todayModelsHavePrice = todayModels.length > 0 && todayModels.every(modelId => {
+        return settings.modelPrices[modelId] !== undefined;
+    });
+
+    if (!weekModelsHavePrice) {
+        $('#token-usage-week-cost').text('Set model prices');
+    } else {
+        $('#token-usage-week-cost').text(formatCurrency(convertUSDtoCurrency(weekCost, selectedCurrency), selectedCurrency));
+    }
+
+    if (!monthModelsHavePrice) {
+        $('#token-usage-month-cost').text('Set model prices');
+    } else {
+        $('#token-usage-month-cost').text(formatCurrency(convertUSDtoCurrency(monthCost, selectedCurrency), selectedCurrency));
+    }
+
+    if (!todayModelsHavePrice) {
+        $('#token-usage-today-cost').text('Set model prices');
+    } else {
+        $('#token-usage-today-cost').text(formatCurrency(convertUSDtoCurrency(todayCost, selectedCurrency), selectedCurrency));
+    }
 
     $('#token-usage-tokenizer').text('Tokenizer: ' + (stats.tokenizer || 'Unknown'));
 
@@ -1884,14 +1944,27 @@ function showWeekDetails() {
     // Build popup content
     let modelRows = '';
     for (const [modelId, data] of Object.entries(weekData)) {
+        const prices = settings.modelPrices[modelId];
+        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
         const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        modelRows += `
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-            </div>
-        `;
+        
+        if (!hasPrice) {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
+                </div>
+            `;
+        } else {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+                </div>
+            `;
+        }
     }
     
     if (modelRows === '') {
@@ -2013,14 +2086,27 @@ function showMonthDetails() {
     
     let modelRows = '';
     for (const [modelId, data] of Object.entries(monthData)) {
+        const prices = settings.modelPrices[modelId];
+        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
         const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        modelRows += `
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-            </div>
-        `;
+        
+        if (!hasPrice) {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
+                </div>
+            `;
+        } else {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+                </div>
+            `;
+        }
     }
     
     if (modelRows === '') {
@@ -2117,14 +2203,27 @@ function showAllTimeDetails() {
     
     let modelRows = '';
     for (const [modelId, data] of Object.entries(allTimeData)) {
+        const prices = settings.modelPrices[modelId];
+        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
         const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        modelRows += `
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-            </div>
-        `;
+        
+        if (!hasPrice) {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
+                </div>
+            `;
+        } else {
+            modelRows += `
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+                </div>
+            `;
+        }
     }
     
     if (modelRows === '') {
