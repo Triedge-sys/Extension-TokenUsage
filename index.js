@@ -1624,9 +1624,9 @@ function createSettingsUI() {
 
                     <!-- Stats Grid (Week, Month, All Time) -->
                     <div class="token-usage-stats-grid" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px;">
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                        <div class="token-usage-stat-card" id="token-usage-week-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
                             <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Week</div>
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">This Week</div>
                                 <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-total">${formatTokens(stats.thisWeek.total)}</div>
                             </div>
                             <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
@@ -1634,9 +1634,9 @@ function createSettingsUI() {
                                 <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-cost">$0.00</span>
                             </div>
                         </div>
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                        <div class="token-usage-stat-card" id="token-usage-month-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
                             <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Month</div>
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">This Month</div>
                                 <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-total">${formatTokens(stats.thisMonth.total)}</div>
                             </div>
                             <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
@@ -1644,9 +1644,9 @@ function createSettingsUI() {
                                 <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-cost">$0.00</span>
                             </div>
                         </div>
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                        <div class="token-usage-stat-card" id="token-usage-alltime-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
                             <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">All Time</div>
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">All Time</div>
                                 <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-alltime-total">${formatTokens(stats.allTime.total)}</div>
                             </div>
                             <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
@@ -1730,14 +1730,14 @@ function createSettingsUI() {
     const currencyToggle = document.getElementById('token-usage-currency-toggle');
     if (currencyToggle) {
         currencyToggle.checked = settings.currency !== 'USD';
-        
+
         // If currency is already selected (not USD), load rates and show selector on page load
         if (settings.currency !== 'USD') {
             loadCurrencyRates().then(() => {
                 showCurrencySelector();
             });
         }
-        
+
         currencyToggle.addEventListener('change', async () => {
             console.log('[Token Usage Tracker] Currency toggle clicked:', currencyToggle.checked);
 
@@ -1759,9 +1759,35 @@ function createSettingsUI() {
         });
     }
 
+    // Week details popup handler
+    const weekCard = document.getElementById('token-usage-week-card');
+    if (weekCard) {
+        weekCard.addEventListener('click', () => {
+            showWeekDetails();
+        });
+    }
+
+    // Month details popup handler
+    const monthCard = document.getElementById('token-usage-month-card');
+    if (monthCard) {
+        monthCard.addEventListener('click', () => {
+            showMonthDetails();
+        });
+    }
+
+    // All time details popup handler
+    const alltimeCard = document.getElementById('token-usage-alltime-card');
+    if (alltimeCard) {
+        alltimeCard.addEventListener('click', () => {
+            showAllTimeDetails();
+        });
+    }
+
     // Subscribe to updates
     eventSource.on('tokenUsageUpdated', () => {
         updateUIStats();
+        // Refresh open detail popups
+        refreshDetailPopups();
     });
 
     // Handle container resize with ResizeObserver (handles panel width changes)
@@ -1790,6 +1816,383 @@ function createSettingsUI() {
     
     // Initialize UI stats
     updateUIStats();
+}
+
+/**
+ * Refresh all open detail popups with latest data
+ */
+function refreshDetailPopups() {
+    // Refresh week popup if open
+    if (document.getElementById('week-details-popup')) {
+        document.getElementById('week-details-popup').remove();
+        showWeekDetails();
+    }
+    // Refresh month popup if open
+    if (document.getElementById('month-details-popup')) {
+        document.getElementById('month-details-popup').remove();
+        showMonthDetails();
+    }
+    // Refresh all time popup if open
+    if (document.getElementById('alltime-details-popup')) {
+        document.getElementById('alltime-details-popup').remove();
+        showAllTimeDetails();
+    }
+}
+
+/**
+ * Show detailed statistics for current week in a popup
+ */
+function showWeekDetails() {
+    const settings = getSettings();
+    const now = new Date();
+    const currentWeekKey = getWeekKey(now);
+    const selectedCurrency = settings.currency || 'USD';
+    
+    // Get all days in current week
+    const weekData = {};
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCost = 0;
+    
+    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+        const [year, month, day] = dayKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        
+        if (getWeekKey(date) === currentWeekKey) {
+            // Aggregate by model
+            if (data.models) {
+                for (const [modelId, modelData] of Object.entries(data.models)) {
+                    if (!weekData[modelId]) {
+                        weekData[modelId] = { input: 0, output: 0, cost: 0 };
+                    }
+                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                    const modelCost = calculateCost(mInput, mOutput, modelId);
+                    
+                    weekData[modelId].input += mInput;
+                    weekData[modelId].output += mOutput;
+                    weekData[modelId].cost += modelCost;
+                    
+                    totalInput += mInput;
+                    totalOutput += mOutput;
+                    totalCost += modelCost;
+                }
+            }
+        }
+    }
+    
+    // Build popup content
+    let modelRows = '';
+    for (const [modelId, data] of Object.entries(weekData)) {
+        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
+        modelRows += `
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+            </div>
+        `;
+    }
+    
+    if (modelRows === '') {
+        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data for this week</div>';
+    }
+    
+    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
+    
+    // Create popup HTML - smaller floating window with drag
+    const popupHtml = `
+        <div style="position: absolute; top: 100px; right: 20px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="week-details-popup">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="week-details-popup-header">
+                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 This Week Details</h3>
+                <button onclick="document.getElementById('week-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
+            </div>
+            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
+                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
+                </div>
+                
+                ${modelRows}
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
+                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
+                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing popup if any
+    const existing = document.getElementById('week-details-popup');
+    if (existing) existing.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', popupHtml);
+    
+    // Make popup draggable
+    const popup = document.getElementById('week-details-popup');
+    const header = document.getElementById('week-details-popup-header');
+    
+    // Prevent clicks on popup from closing parent drawers
+    popup.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+    popup.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+    });
+    
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+    
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = popup.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        popup.style.left = `${initialLeft + dx}px`;
+        popup.style.top = `${initialTop + dy}px`;
+        popup.style.right = 'auto';
+    });
+    
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+}
+
+/**
+ * Show detailed statistics for current month in a popup
+ */
+function showMonthDetails() {
+    const settings = getSettings();
+    const now = new Date();
+    const currentMonthKey = getMonthKey(now);
+    const selectedCurrency = settings.currency || 'USD';
+    
+    // Get all days in current month
+    const monthData = {};
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCost = 0;
+    
+    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+        const [year, month, day] = dayKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        
+        if (getMonthKey(date) === currentMonthKey) {
+            if (data.models) {
+                for (const [modelId, modelData] of Object.entries(data.models)) {
+                    if (!monthData[modelId]) {
+                        monthData[modelId] = { input: 0, output: 0, cost: 0 };
+                    }
+                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                    const modelCost = calculateCost(mInput, mOutput, modelId);
+                    
+                    monthData[modelId].input += mInput;
+                    monthData[modelId].output += mOutput;
+                    monthData[modelId].cost += modelCost;
+                    
+                    totalInput += mInput;
+                    totalOutput += mOutput;
+                    totalCost += modelCost;
+                }
+            }
+        }
+    }
+    
+    let modelRows = '';
+    for (const [modelId, data] of Object.entries(monthData)) {
+        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
+        modelRows += `
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+            </div>
+        `;
+    }
+    
+    if (modelRows === '') {
+        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data for this month</div>';
+    }
+    
+    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
+    
+    const popupHtml = `
+        <div style="position: absolute; top: 100px; right: 420px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="month-details-popup">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="month-details-popup-header">
+                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 This Month Details</h3>
+                <button onclick="document.getElementById('month-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
+            </div>
+            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
+                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
+                </div>
+                
+                ${modelRows}
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
+                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
+                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    const existing = document.getElementById('month-details-popup');
+    if (existing) existing.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', popupHtml);
+    
+    const popup = document.getElementById('month-details-popup');
+    const header = document.getElementById('month-details-popup-header');
+    
+    popup.addEventListener('click', (e) => e.stopPropagation());
+    popup.addEventListener('mousedown', (e) => e.stopPropagation());
+    
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+    
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = popup.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        popup.style.left = `${initialLeft + dx}px`;
+        popup.style.top = `${initialTop + dy}px`;
+        popup.style.right = 'auto';
+    });
+    
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+}
+
+/**
+ * Show detailed statistics for all time in a popup
+ */
+function showAllTimeDetails() {
+    const settings = getSettings();
+    const selectedCurrency = settings.currency || 'USD';
+    
+    // Aggregate all data by model
+    const allTimeData = {};
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCost = 0;
+    
+    for (const [modelId, data] of Object.entries(settings.usage.byModel)) {
+        allTimeData[modelId] = {
+            input: data.input || 0,
+            output: data.output || 0,
+            cost: calculateCost(data.input || 0, data.output || 0, modelId)
+        };
+        totalInput += data.input || 0;
+        totalOutput += data.output || 0;
+        totalCost += allTimeData[modelId].cost;
+    }
+    
+    let modelRows = '';
+    for (const [modelId, data] of Object.entries(allTimeData)) {
+        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
+        modelRows += `
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
+                <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
+                <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
+            </div>
+        `;
+    }
+    
+    if (modelRows === '') {
+        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data yet</div>';
+    }
+    
+    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
+    
+    const popupHtml = `
+        <div style="position: absolute; top: 100px; right: 20px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="alltime-details-popup">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="alltime-details-popup-header">
+                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 All Time Details</h3>
+                <button onclick="document.getElementById('alltime-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
+            </div>
+            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
+                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
+                </div>
+                
+                ${modelRows}
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
+                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
+                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
+                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    const existing = document.getElementById('alltime-details-popup');
+    if (existing) existing.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', popupHtml);
+    
+    const popup = document.getElementById('alltime-details-popup');
+    const header = document.getElementById('alltime-details-popup-header');
+    
+    popup.addEventListener('click', (e) => e.stopPropagation());
+    popup.addEventListener('mousedown', (e) => e.stopPropagation());
+    
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+    
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = popup.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        popup.style.left = `${initialLeft + dx}px`;
+        popup.style.top = `${initialTop + dy}px`;
+        popup.style.right = 'auto';
+    });
+    
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
 }
 
 /**
