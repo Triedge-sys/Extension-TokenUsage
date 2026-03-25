@@ -1596,8 +1596,13 @@ function renderModelColorsGrid() {
     // If grid is already populated with the same models, don't wipe it (prevents input focus loss)
     const existingRows = grid.children('.model-config-row');
     if (existingRows.length === models.length) {
-        // Assume same order check isn't needed for now, unlikely to change order rapidly
-        return;
+        // Check if models are the same
+        const existingModels = Array.from(existingRows).map(row => $(row).find('.model-color-picker').data('model'));
+        const modelsUnchanged = existingModels.length === models.length && 
+                               existingModels.every((m, i) => m === models[i]);
+        if (modelsUnchanged) {
+            return;
+        }
     }
 
     grid.empty();
