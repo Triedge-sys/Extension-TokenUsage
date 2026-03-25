@@ -1730,17 +1730,25 @@ function createSettingsUI() {
     const currencyToggle = document.getElementById('token-usage-currency-toggle');
     if (currencyToggle) {
         currencyToggle.checked = settings.currency !== 'USD';
+        
+        // If currency is already selected (not USD), load rates and show selector on page load
+        if (settings.currency !== 'USD') {
+            loadCurrencyRates().then(() => {
+                showCurrencySelector();
+            });
+        }
+        
         currencyToggle.addEventListener('change', async () => {
             console.log('[Token Usage Tracker] Currency toggle clicked:', currencyToggle.checked);
-            
+
             if (currencyToggle.checked) {
                 // Load currency rates if not already loaded
                 if (!currencyRatesCache) {
                     await loadCurrencyRates();
                 }
-                
+
                 // Show currency selection UI
-                showCurrencySelector();
+                await showCurrencySelector();
             } else {
                 // Reset to USD
                 settings.currency = 'USD';
@@ -1785,9 +1793,37 @@ function createSettingsUI() {
 }
 
 /**
+ * Currency map cache (loaded from Currency_map.json)
+ */
+let currencyMapCache = null;
+
+/**
+ * Load currency map from file
+ * @returns {Promise<Object>} Currency map object
+ */
+async function loadCurrencyMap() {
+    if (currencyMapCache) {
+        return currencyMapCache;
+    }
+    
+    try {
+        // Load from extension root directory using absolute path
+        const response = await fetch('/scripts/extensions/third-party/Extension-TokenUsage/Currency_map.json');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        currencyMapCache = await response.json();
+        return currencyMapCache;
+    } catch (error) {
+        console.error('[Token Usage Tracker] Error loading currency map:', error);
+        return {};
+    }
+}
+
+/**
  * Show currency selector dropdown
  */
-function showCurrencySelector() {
+async function showCurrencySelector() {
     const settings = getSettings();
     const currencies = getAvailableCurrencies();
 
@@ -1796,6 +1832,9 @@ function showCurrencySelector() {
         toastr.error('Failed to load currency list');
         return;
     }
+
+    // Load currency map for display names
+    const currencyMap = await loadCurrencyMap();
 
     // Create or get existing selector container
     let selectorContainer = document.getElementById('token-usage-currency-selector');
@@ -1814,7 +1853,7 @@ function showCurrencySelector() {
         }
         return;
     }
-    
+
     selectorContainer = document.createElement('div');
     selectorContainer.id = 'token-usage-currency-selector';
     selectorContainer.style.cssText = `
@@ -1827,12 +1866,12 @@ function showCurrencySelector() {
         border: 1px solid var(--SmartThemeBorderColor);
         border-radius: 6px;
     `;
-    
+
     // Create label
     const label = document.createElement('span');
     label.textContent = 'Currency:';
     label.style.cssText = 'font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.8; white-space: nowrap;';
-    
+
     // Create select dropdown
     const select = document.createElement('select');
     select.style.cssText = `
@@ -1845,18 +1884,20 @@ function showCurrencySelector() {
         max-width: 200px;
         cursor: pointer;
     `;
-    
+
     // Popular currencies first, then alphabetical
     const popularCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'RUB', 'KRW', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'PLN', 'UAH', 'KZT'];
     const sortedCurrencies = [
         ...popularCurrencies.filter(c => currencies.includes(c)),
         ...currencies.filter(c => !popularCurrencies.includes(c))
     ];
-    
+
     sortedCurrencies.forEach(currency => {
         const option = document.createElement('option');
         option.value = currency;
-        option.textContent = currency;
+        // Use display name from currency map if available
+        const displayName = currencyMap[currency.toLowerCase()] || currency;
+        option.textContent = `${currency} - ${displayName}`;
         if (currency === settings.currency) {
             option.selected = true;
         }
@@ -1922,7 +1963,7 @@ function showCurrencySelector() {
     function updateRateDisplay() {
         const selectedCurrency = select.value;
         const rate = currencyRatesCache ? (currencyRatesCache[selectedCurrency.toLowerCase()] || 1) : 1;
-        
+
         let rateEl = selectorContainer.querySelector('.currency-rate-display');
         if (!rateEl) {
             rateEl = document.createElement('span');
