@@ -1888,9 +1888,13 @@ async function showCurrencySelector() {
     // Popular currencies first, then alphabetical
     const popularCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'RUB', 'KRW', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'PLN', 'UAH', 'KZT'];
     const sortedCurrencies = [
-        ...popularCurrencies.filter(c => currencies.includes(c)),
-        ...currencies.filter(c => !popularCurrencies.includes(c))
+        ...popularCurrencies.filter(c => currencies.includes(c.toLowerCase())),
+        ...currencies.filter(c => !popularCurrencies.some(p => p.toLowerCase() === c)).sort()
     ];
+    
+    console.log('[Token Usage Tracker] Popular:', popularCurrencies.filter(c => currencies.includes(c.toLowerCase())));
+    console.log('[Token Usage Tracker] Others (sorted):', currencies.filter(c => !popularCurrencies.some(p => p.toLowerCase() === c)).sort());
+    console.log('[Token Usage Tracker] Final order:', sortedCurrencies);
 
     sortedCurrencies.forEach(currency => {
         const option = document.createElement('option');
