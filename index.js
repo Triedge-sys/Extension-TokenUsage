@@ -1826,12 +1826,118 @@ function createSettingsUI() {
         });
     });
 
-    $('#token-usage-reset-all').on('click', function() {
-        if (confirm('Are you sure you want to reset ALL token usage data? This cannot be undone.')) {
-            resetAllUsage();
-            updateUIStats();
-            toastr.success('All stats reset');
+    $('#token-usage-reset-all').on('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Remove existing dialog if any
+        const existingDialog = document.getElementById('token-usage-reset-dialog');
+        if (existingDialog) {
+            existingDialog.remove();
         }
+        
+        // Create custom dialog with checkbox (similar to week details popup)
+        const dialogHtml = `
+            <div id="token-usage-reset-dialog" style="position: absolute; top: 150px; right: 50%; transform: translateX(50%); background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="token-usage-reset-dialog">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 8px 8px 0 0; cursor: move;" id="token-usage-reset-dialog-header">
+                    <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">⚠️ Reset Token Usage Data</h3>
+                    <button onclick="document.getElementById('token-usage-reset-dialog').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
+                </div>
+                <div style="padding: 16px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
+                    <p style="margin: 0 0 16px; color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 12px; line-height: 1.5;">
+                        Choose what to reset:
+                    </p>
+                    <label style="display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; cursor: pointer;">
+                        <input type="checkbox" id="token-usage-reset-all-data" style="width: 16px; height: 16px; margin-top: 2px; cursor: pointer;">
+                        <span style="color: var(--SmartThemeBodyColor); font-size: 12px; line-height: 1.4;">
+                            <strong>Delete everything</strong> (stats, model colors, prices, settings)<br>
+                            <span style="opacity: 0.6; font-size: 11px;">Use this when uninstalling the extension</span>
+                        </span>
+                    </label>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <button id="token-usage-reset-cancel" class="menu_button" style="padding: 8px 16px; border-radius: 4px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 12px;">
+                            Cancel
+                        </button>
+                        <button id="token-usage-reset-confirm" class="menu_button" style="padding: 8px 16px; border-radius: 4px; border: 1px solid #ef4444; background: #ef4444; color: white; cursor: pointer; font-size: 12px;">
+                            Reset
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        $('body').append(dialogHtml);
+        
+        // Make dialog draggable (same as week details popup)
+        const dialog = document.getElementById('token-usage-reset-dialog');
+        const header = document.getElementById('token-usage-reset-dialog-header');
+        
+        // Prevent clicks on dialog from closing parent drawers
+        dialog.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        dialog.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+        });
+        
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+        
+        header.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            const rect = dialog.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+            e.preventDefault();
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            dialog.style.left = `${initialLeft + dx}px`;
+            dialog.style.top = `${initialTop + dy}px`;
+            dialog.style.right = 'auto';
+            dialog.style.transform = 'none';
+        });
+        
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+        
+        // Handle cancel
+        $('#token-usage-reset-cancel').on('click', function() {
+            dialog.remove();
+        });
+        
+        // Handle confirm
+        $('#token-usage-reset-confirm').on('click', function() {
+            const deleteAll = $('#token-usage-reset-all-data').is(':checked');
+
+            if (deleteAll) {
+                // Delete from memory
+                delete extension_settings[extensionName];
+                
+                // Use SillyTavern's save function to persist changes
+                saveSettingsDebounced();
+                
+                toastr.success('Extension data completely removed');
+
+                // Reload page to reflect changes
+                setTimeout(() => {
+                    location.reload();
+                }, 1500);
+            } else {
+                // Reset only usage stats
+                resetAllUsage();
+                updateUIStats();
+                toastr.success('Stats reset (settings preserved)');
+            }
+
+            dialog.remove();
+        });
     });
 
     // Currency toggle checkbox handler
