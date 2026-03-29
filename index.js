@@ -70,10 +70,12 @@ function loadSettings() {
     // Migration: Convert byDay.models from numeric format to object format
     // Old: models[modelId] = totalTokens (number)
     // New: models[modelId] = { input, output, total }
+    let migrationNeeded = false;
     for (const dayData of Object.values(settings.usage.byDay)) {
         if (dayData.models) {
             for (const [modelId, value] of Object.entries(dayData.models)) {
                 if (typeof value === 'number') {
+                    migrationNeeded = true;
                     // Migrate: estimate input/output using day's ratio
                     const ratio = dayData.total ? value / dayData.total : 0;
                     dayData.models[modelId] = {
@@ -84,6 +86,12 @@ function loadSettings() {
                 }
             }
         }
+    }
+
+    // Save migration changes to localStorage
+    if (migrationNeeded) {
+        saveSettings();
+        console.log('[Token Usage Tracker] Migrated byDay.models to new format and saved');
     }
 
     // Initialize session start time
@@ -634,6 +642,7 @@ function handleGenerateAfterData(generate_data, dryRun) {
  */
 let isQuietGeneration = false;
 let isImpersonateGeneration = false;
+let isPreContinueReady = false;
 
 async function handleGenerationStarted(type, params, isDryRun) {
     if (isDryRun) return;
@@ -644,6 +653,7 @@ async function handleGenerationStarted(type, params, isDryRun) {
 
     // Reset pre-continue state
     preContinueTokenCount = 0;
+    isPreContinueReady = false;
 
     // For continue type, capture the current message's token count
     if (type === 'continue') {
@@ -652,22 +662,30 @@ async function handleGenerationStarted(type, params, isDryRun) {
             const lastMessage = context.chat[context.chat.length - 1];
 
             if (lastMessage) {
-                // Use existing token count if available
+                // Use existing token count if available (synchronous - preferred)
                 if (lastMessage.extra?.token_count && typeof lastMessage.extra.token_count === 'number') {
                     preContinueTokenCount = lastMessage.extra.token_count;
+                    isPreContinueReady = true;
+                    console.log(`[Token Usage Tracker] Pre-continue tokens (cached): ${preContinueTokenCount}`);
                 } else {
-                    // Calculate it ourselves
+                    // Calculate it ourselves (async)
                     let tokens = await countTokens(lastMessage.mes || '');
                     if (lastMessage.extra?.reasoning) {
                         tokens += await countTokens(lastMessage.extra.reasoning);
                     }
                     preContinueTokenCount = tokens;
+                    isPreContinueReady = true;
+                    console.log(`[Token Usage Tracker] Pre-continue tokens (counted): ${preContinueTokenCount}`);
                 }
             }
         } catch (error) {
             console.error('[Token Usage Tracker] Error capturing pre-continue state:', error);
             preContinueTokenCount = 0;
+            isPreContinueReady = true; // Mark as ready even on error to avoid blocking
         }
+    } else {
+        // Non-continue types don't need pre-continue state
+        isPreContinueReady = true;
     }
 }
 
@@ -693,6 +711,26 @@ async function handleMessageReceived(messageIndex, type) {
     if (!pendingInputTokensPromise) {
         console.log(`[Token Usage Tracker] Skipping message with no pending token count (type: ${type || 'unknown'})`);
         return;
+    }
+
+    // For 'continue' type, wait for pre-continue token count to be ready
+    // This prevents race condition where MESSAGE_RECEIVED fires before GENERATION_STARTED completes
+    if (type === 'continue' && !isPreContinueReady) {
+        console.log('[Token Usage Tracker] Waiting for pre-continue tokens...');
+        const maxWait = 5000; // Max wait 5 seconds
+        const waitInterval = 50;
+        let waited = 0;
+        
+        while (!isPreContinueReady && waited < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, waitInterval));
+            waited += waitInterval;
+        }
+        
+        if (!isPreContinueReady) {
+            console.warn('[Token Usage Tracker] Timeout waiting for pre-continue tokens, proceeding without delta');
+        } else {
+            console.log(`[Token Usage Tracker] Pre-continue ready after ${waited}ms`);
+        }
     }
 
     try {
@@ -732,6 +770,7 @@ async function handleMessageReceived(messageIndex, type) {
         // Reset pre-continue state
         const savedPreContinueCount = preContinueTokenCount;
         preContinueTokenCount = 0;
+        isPreContinueReady = false;
 
         // Await the input token counting that was started in handleGenerateAfterData
         const inputTokens = await pendingInputTokensPromise;
@@ -783,7 +822,8 @@ async function handleGenerationStopped() {
         const modelId = pendingModelId;
         pendingInputTokensPromise = null;
         pendingModelId = null;
-        preContinueTokenCount = 0; // Reset continue state too
+        preContinueTokenCount = 0;
+        isPreContinueReady = false; // Reset continue state too
 
         // Get current chat ID if available
         const context = getContext();
@@ -798,6 +838,7 @@ async function handleGenerationStopped() {
         // Reset pending tokens even on error to prevent double counting
         pendingInputTokensPromise = null;
         preContinueTokenCount = 0;
+        isPreContinueReady = false;
     }
 }
 
@@ -809,6 +850,7 @@ function handleChatChanged(chatId) {
     pendingInputTokensPromise = null;
     pendingModelId = null;
     preContinueTokenCount = 0;
+    isPreContinueReady = false;
     isQuietGeneration = false;
     isImpersonateGeneration = false;
     console.log(`[Token Usage Tracker] Chat changed to: ${chatId}`);
@@ -824,12 +866,12 @@ async function handleImpersonateReady(text) {
     if (!pendingInputTokensPromise) return;
 
     try {
-
         // Await the input token counting that was started in handleGenerateAfterData
         const inputTokens = await pendingInputTokensPromise;
         const modelId = pendingModelId;
         pendingInputTokensPromise = null;
         pendingModelId = null;
+        isPreContinueReady = false;
 
         // Count output tokens from the impersonated text
         let outputTokens = 0;
@@ -850,6 +892,7 @@ async function handleImpersonateReady(text) {
         console.error('[Token Usage Tracker] Error handling impersonate ready:', error);
         pendingInputTokensPromise = null;
         pendingModelId = null;
+        isPreContinueReady = false;
         isImpersonateGeneration = false;
     }
 }
@@ -2555,6 +2598,7 @@ async function flushQuietGeneration() {
         // Reset state
         pendingInputTokensPromise = null;
         pendingModelId = null;
+        isPreContinueReady = false;
         isQuietGeneration = false;
     }
 }
