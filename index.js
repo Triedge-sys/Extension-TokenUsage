@@ -390,42 +390,6 @@ let currencyRatesCache = null;
 let currencyCacheDate = null;
 
 /**
- * Load currency rates from API with in-memory caching (legacy wrapper)
- * @deprecated Use currencyService.loadRates() directly
- */
-async function loadCurrencyRates() {
-    const result = await currencyService.loadRates();
-    // Sync to legacy globals
-    currencyRatesCache = currencyService.ratesCache;
-    currencyCacheDate = currencyService.cacheDate;
-    return result;
-}
-
-/**
- * Get available currencies from loaded rates (legacy wrapper)
- * @deprecated Use currencyService.getAvailableCurrencies() directly
- */
-function getAvailableCurrencies() {
-    return currencyService.getAvailableCurrencies();
-}
-
-/**
- * Convert USD amount to selected currency (legacy wrapper)
- * @deprecated Use currencyService.convertToCurrency() directly
- */
-function convertUSDtoCurrency(usdAmount, targetCurrency) {
-    return currencyService.convertToCurrency(usdAmount, targetCurrency);
-}
-
-/**
- * Format currency amount with appropriate symbol/notation (legacy wrapper)
- * @deprecated Use currencyService.format() directly
- */
-function formatCurrency(amount, currency) {
-    return currencyService.format(amount, currency);
-}
-
-/**
  * Get the current day key (YYYY-MM-DD)
  */
 function getDayKey(date = new Date()) {
@@ -1597,7 +1561,7 @@ function showTooltip(d) {
     const dayModelsHavePrice = dayModelIds.length > 0 && dayModelIds.every(modelId => {
         return settings.modelPrices[modelId] !== undefined;
     });
-    const costDisplay = !dayModelsHavePrice ? 'Set model prices' : (dayCost > 0 ? formatCurrency(convertUSDtoCurrency(dayCost, selectedCurrency), selectedCurrency) : formatCurrency(0, selectedCurrency));
+    const costDisplay = !dayModelsHavePrice ? 'Set model prices' : (dayCost > 0 ? currencyService.convertAndFormat(dayCost, selectedCurrency) : currencyService.format(0, selectedCurrency));
 
     tooltip.innerHTML = `
         <div style="font-weight: 600; margin-bottom: 2px; color: var(--SmartThemeBodyColor);">${d.fullDate}</div>
@@ -1686,14 +1650,14 @@ function updateUIStats() {
 
     // Cost calculations
     const allTimeCost = calculateAllTimeCost();
-    const convertedAllTimeCost = convertUSDtoCurrency(allTimeCost, selectedCurrency);
+    const convertedAllTimeCost = currencyService.convertToCurrency(allTimeCost, selectedCurrency);
 
     if (!allModelsHavePrice) {
         $('#token-usage-alltime-cost').text('Set model prices');
     } else if (convertedAllTimeCost > 0) {
-        $('#token-usage-alltime-cost').text(formatCurrency(convertedAllTimeCost, selectedCurrency));
+        $('#token-usage-alltime-cost').text(currencyService.format(convertedAllTimeCost, selectedCurrency));
     } else {
-        $('#token-usage-alltime-cost').text(formatCurrency(0, selectedCurrency));
+        $('#token-usage-alltime-cost').text(currencyService.format(0, selectedCurrency));
     }
 
     // For Week/Month/Today: Calculate from byDay data
@@ -1769,19 +1733,19 @@ function updateUIStats() {
     if (!weekModelsHavePrice) {
         $('#token-usage-week-cost').text('Set model prices');
     } else {
-        $('#token-usage-week-cost').text(formatCurrency(convertUSDtoCurrency(weekCost, selectedCurrency), selectedCurrency));
+        $('#token-usage-week-cost').text(currencyService.convertAndFormat(weekCost, selectedCurrency));
     }
 
     if (!monthModelsHavePrice) {
         $('#token-usage-month-cost').text('Set model prices');
     } else {
-        $('#token-usage-month-cost').text(formatCurrency(convertUSDtoCurrency(monthCost, selectedCurrency), selectedCurrency));
+        $('#token-usage-month-cost').text(currencyService.convertAndFormat(monthCost, selectedCurrency));
     }
 
     if (!todayModelsHavePrice) {
         $('#token-usage-today-cost').text('Set model prices');
     } else {
-        $('#token-usage-today-cost').text(formatCurrency(convertUSDtoCurrency(todayCost, selectedCurrency), selectedCurrency));
+        $('#token-usage-today-cost').text(currencyService.convertAndFormat(todayCost, selectedCurrency));
     }
 
     $('#token-usage-tokenizer').text('Tokenizer: ' + (stats.tokenizer || 'Unknown'));
@@ -2135,7 +2099,7 @@ function createSettingsUI() {
 
         // If currency is already selected (not USD), load rates and show selector on page load
         if (settings.currency !== 'USD') {
-            loadCurrencyRates().then(() => {
+            currencyService.loadRates().then(() => {
                 showCurrencySelector();
             });
         }
@@ -2145,8 +2109,8 @@ function createSettingsUI() {
 
             if (currencyToggle.checked) {
                 // Load currency rates if not already loaded
-                if (!currencyRatesCache) {
-                    await loadCurrencyRates();
+                if (!currencyService.isLoaded()) {
+                    await currencyService.loadRates();
                 }
 
                 // Show currency selection UI
@@ -2261,7 +2225,7 @@ function createPeriodPopup(popupId, title, modelData, totalInput, totalOutput, t
     for (const [modelId, data] of Object.entries(modelData)) {
         const prices = settings.modelPrices[modelId];
         const hasPrice = prices !== undefined;
-        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
+        const convertedCost = currencyService.convertToCurrency(data.cost, selectedCurrency);
         const modelTitle = modelId.length > 25 ? modelId.substring(0, 22) + '...' : modelId;
 
         if (!hasPrice) {
@@ -2277,7 +2241,7 @@ function createPeriodPopup(popupId, title, modelData, totalInput, totalOutput, t
                 <div class="tu-popup-model-row">
                     <div class="tu-text-body tu-truncate" title="${modelId}">${modelTitle}</div>
                     <div class="tu-text-body tu-text-center tu-opacity-80">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div class="tu-text-success tu-text-right">${formatCurrency(convertedCost, selectedCurrency)}</div>
+                    <div class="tu-text-success tu-text-right">${currencyService.format(convertedCost, selectedCurrency)}</div>
                 </div>
             `;
         }
@@ -2287,7 +2251,7 @@ function createPeriodPopup(popupId, title, modelData, totalInput, totalOutput, t
         modelRows = `<div class="tu-popup-empty">${emptyMessage}</div>`;
     }
 
-    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
+    const totalConvertedCost = currencyService.convertToCurrency(totalCost, selectedCurrency);
     const rightPosition = position === 'left' ? '420px' : '20px';
 
     return `
@@ -2308,7 +2272,7 @@ function createPeriodPopup(popupId, title, modelData, totalInput, totalOutput, t
                 <div class="tu-popup-total-row">
                     <div class="tu-text-body">Total</div>
                     <div class="tu-text-body tu-text-center">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
-                    <div class="tu-text-success">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
+                    <div class="tu-text-success">${currencyService.format(totalConvertedCost, selectedCurrency)}</div>
                 </div>
             </div>
         </div>
@@ -2552,7 +2516,7 @@ async function loadCurrencyMap() {
  */
 async function showCurrencySelector() {
     const settings = getSettings();
-    const currencies = getAvailableCurrencies();
+    const currencies = currencyService.getAvailableCurrencies();
 
     if (currencies.length === 0) {
         console.error('[Token Usage Tracker] No currencies available');
