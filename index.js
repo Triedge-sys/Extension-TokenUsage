@@ -2322,132 +2322,54 @@ function makePopupDraggable(popupId) {
 }
 
 /**
- * Show detailed statistics for current week in a popup
+ * Helper function to aggregate usage data for a specific period
+ * @param {string} periodType - 'day', 'week', or 'month'
+ * @param {string} periodKey - The period key to filter by
+ * @returns {Object} Aggregated data { modelData, totalInput, totalOutput, totalCost }
  */
-function showWeekDetails() {
+function getPeriodData(periodType, periodKey) {
     const settings = getSettings();
-    const now = new Date();
-    const currentWeekKey = getWeekKey(now);
-    const selectedCurrency = settings.currency || 'USD';
-
-    // Get all days in current week
-    const weekData = {};
+    const periodData = {};
     let totalInput = 0;
     let totalOutput = 0;
     let totalCost = 0;
+
+    const getPeriodFn = periodType === 'week' ? getWeekKey : 
+                        periodType === 'month' ? getMonthKey : getDayKey;
 
     for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
         const [year, month, day] = dayKey.split('-').map(Number);
         const date = new Date(year, month - 1, day);
 
-        if (getWeekKey(date) === currentWeekKey) {
-            // Aggregate by model
-            if (data.models) {
-                for (const [modelId, modelData] of Object.entries(data.models)) {
-                    if (!weekData[modelId]) {
-                        weekData[modelId] = { input: 0, output: 0, cost: 0 };
-                    }
-                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
-                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
-                    const modelCost = calculateCost(mInput, mOutput, modelId);
-
-                    weekData[modelId].input += mInput;
-                    weekData[modelId].output += mOutput;
-                    weekData[modelId].cost += modelCost;
-
-                    totalInput += mInput;
-                    totalOutput += mOutput;
-                    totalCost += modelCost;
+        if (getPeriodFn(date) === periodKey && data.models) {
+            for (const [modelId, modelData] of Object.entries(data.models)) {
+                if (!periodData[modelId]) {
+                    periodData[modelId] = { input: 0, output: 0, cost: 0 };
                 }
+                const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                const modelCost = calculateCost(mInput, mOutput, modelId);
+
+                periodData[modelId].input += mInput;
+                periodData[modelId].output += mOutput;
+                periodData[modelId].cost += modelCost;
+
+                totalInput += mInput;
+                totalOutput += mOutput;
+                totalCost += modelCost;
             }
         }
     }
 
-    // Remove existing popup if any
-    const existing = document.getElementById('week-details-popup');
-    if (existing) existing.remove();
-
-    const popupHtml = createPeriodPopup(
-        'week-details-popup',
-        'This Week Details',
-        weekData,
-        totalInput,
-        totalOutput,
-        totalCost,
-        'No data for this week',
-        'right'
-    );
-
-    document.body.insertAdjacentHTML('beforeend', popupHtml);
-    makePopupDraggable('week-details-popup');
+    return { modelData: periodData, totalInput, totalOutput, totalCost };
 }
 
 /**
- * Show detailed statistics for current month in a popup
+ * Get all-time usage data aggregated by model
+ * @returns {Object} Aggregated data { modelData, totalInput, totalOutput, totalCost }
  */
-function showMonthDetails() {
+function getAllTimeData() {
     const settings = getSettings();
-    const now = new Date();
-    const currentMonthKey = getMonthKey(now);
-
-    // Get all days in current month
-    const monthData = {};
-    let totalInput = 0;
-    let totalOutput = 0;
-    let totalCost = 0;
-
-    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
-        const [year, month, day] = dayKey.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-
-        if (getMonthKey(date) === currentMonthKey) {
-            if (data.models) {
-                for (const [modelId, modelData] of Object.entries(data.models)) {
-                    if (!monthData[modelId]) {
-                        monthData[modelId] = { input: 0, output: 0, cost: 0 };
-                    }
-                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
-                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
-                    const modelCost = calculateCost(mInput, mOutput, modelId);
-
-                    monthData[modelId].input += mInput;
-                    monthData[modelId].output += mOutput;
-                    monthData[modelId].cost += modelCost;
-
-                    totalInput += mInput;
-                    totalOutput += mOutput;
-                    totalCost += modelCost;
-                }
-            }
-        }
-    }
-
-    // Remove existing popup if any
-    const existing = document.getElementById('month-details-popup');
-    if (existing) existing.remove();
-
-    const popupHtml = createPeriodPopup(
-        'month-details-popup',
-        'This Month Details',
-        monthData,
-        totalInput,
-        totalOutput,
-        totalCost,
-        'No data for this month',
-        'left'
-    );
-
-    document.body.insertAdjacentHTML('beforeend', popupHtml);
-    makePopupDraggable('month-details-popup');
-}
-
-/**
- * Show detailed statistics for all time in a popup
- */
-function showAllTimeDetails() {
-    const settings = getSettings();
-
-    // Aggregate all data by model
     const allTimeData = {};
     let totalInput = 0;
     let totalOutput = 0;
@@ -2464,6 +2386,69 @@ function showAllTimeDetails() {
         totalCost += allTimeData[modelId].cost;
     }
 
+    return { modelData: allTimeData, totalInput, totalOutput, totalCost };
+}
+
+/**
+ * Show detailed statistics for current week in a popup
+ */
+function showWeekDetails() {
+    const now = new Date();
+    const currentWeekKey = getWeekKey(now);
+    const { modelData, totalInput, totalOutput, totalCost } = getPeriodData('week', currentWeekKey);
+
+    // Remove existing popup if any
+    const existing = document.getElementById('week-details-popup');
+    if (existing) existing.remove();
+
+    const popupHtml = createPeriodPopup(
+        'week-details-popup',
+        'This Week Details',
+        modelData,
+        totalInput,
+        totalOutput,
+        totalCost,
+        'No data for this week',
+        'right'
+    );
+
+    document.body.insertAdjacentHTML('beforeend', popupHtml);
+    makePopupDraggable('week-details-popup');
+}
+
+/**
+ * Show detailed statistics for current month in a popup
+ */
+function showMonthDetails() {
+    const now = new Date();
+    const currentMonthKey = getMonthKey(now);
+    const { modelData, totalInput, totalOutput, totalCost } = getPeriodData('month', currentMonthKey);
+
+    // Remove existing popup if any
+    const existing = document.getElementById('month-details-popup');
+    if (existing) existing.remove();
+
+    const popupHtml = createPeriodPopup(
+        'month-details-popup',
+        'This Month Details',
+        modelData,
+        totalInput,
+        totalOutput,
+        totalCost,
+        'No data for this month',
+        'left'
+    );
+
+    document.body.insertAdjacentHTML('beforeend', popupHtml);
+    makePopupDraggable('month-details-popup');
+}
+
+/**
+ * Show detailed statistics for all time in a popup
+ */
+function showAllTimeDetails() {
+    const { modelData, totalInput, totalOutput, totalCost } = getAllTimeData();
+
     // Remove existing popup if any
     const existing = document.getElementById('alltime-details-popup');
     if (existing) existing.remove();
@@ -2471,7 +2456,7 @@ function showAllTimeDetails() {
     const popupHtml = createPeriodPopup(
         'alltime-details-popup',
         'All Time Details',
-        allTimeData,
+        modelData,
         totalInput,
         totalOutput,
         totalCost,
