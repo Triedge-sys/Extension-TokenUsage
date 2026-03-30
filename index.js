@@ -1303,48 +1303,12 @@ function getChartData(days) {
 }
 
 /**
- * Render the bar chart
+ * Calculate Y-axis scale parameters
+ * @param {number} maxValue - Maximum value to display
+ * @returns {{ niceMax: number, step: number, yScale: function }} Scale parameters
  */
-function renderChart() {
-    const container = document.getElementById('token-usage-chart');
-    if (!container) return;
-
-    container.innerHTML = '';
-    const rect = container.getBoundingClientRect();
-    const width = rect.width || 400;
-    const height = rect.height || 200;
-
-    if (width === 0 || height === 0) return;
-    if (chartData.length === 0) {
-        container.innerHTML = '<div style="text-align: center; color: rgba(255,255,255,0.5); padding: 40px;">No usage data yet</div>';
-        return;
-    }
-
-    const margin = CONFIG.CHART_MARGIN;
-    const chartWidth = width - margin.left - margin.right;
-    const chartHeight = height - margin.top - margin.bottom;
-
-    const svg = createSVGElement('svg', {
-        width: width,
-        height: height,
-        viewBox: `0 0 ${width} ${height}`,
-        style: 'display: block; max-width: 100%;'
-    });
-
-
-    const cursorGroup = createSVGElement('g', { class: 'cursors' });
-    const gridGroup = createSVGElement('g', { class: 'grid' });
-    const barGroup = createSVGElement('g', { class: 'bars' });
-    const textGroup = createSVGElement('g', { class: 'labels' });
-
-    svg.appendChild(cursorGroup);
-    svg.appendChild(gridGroup);
-    svg.appendChild(barGroup);
-    svg.appendChild(textGroup);
-
-    // Y Scale
-    const maxUsage = Math.max(...chartData.map(d => d.usage), 1);
-    const roughStep = maxUsage / 4;
+function calculateYScale(maxValue, chartHeight) {
+    const roughStep = maxValue / 4;
     const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep || 1)));
     let step = Math.ceil(roughStep / magnitude) * magnitude || 1000;
 
@@ -1353,19 +1317,25 @@ function renderChart() {
     else if (step / magnitude < 7) step = 5 * magnitude;
     else step = 10 * magnitude;
 
-    let niceMax = Math.ceil(maxUsage / step) * step;
+    let niceMax = Math.ceil(maxValue / step) * step;
     if (niceMax === 0) niceMax = 5000;
 
     const yScale = (val) => chartHeight - (val / niceMax) * chartHeight;
 
-    // Grid and Y axis
+    return { niceMax, step, yScale };
+}
+
+/**
+ * Render Y-axis grid lines and labels
+ */
+function renderYAxis(gridGroup, textGroup, niceMax, step, yScale, margin, chartWidth) {
     for (let val = 0; val <= niceMax; val += step) {
         const y = margin.top + yScale(val);
 
         const line = createSVGElement('line', {
             x1: margin.left,
             y1: y,
-            x2: width - margin.right,
+            x2: margin.left + chartWidth,
             y2: y,
             stroke: CHART_COLORS.grid,
             'stroke-width': '1',
@@ -1384,130 +1354,201 @@ function renderChart() {
         text.textContent = formatTokens(val);
         textGroup.appendChild(text);
     }
+}
+
+/**
+ * Create SVG path for bar segment with optional rounded top corners
+ */
+function createSegmentPath(barX, cumulativeY, segmentHeight, width, radius, isTop, isBottom) {
+    const r = Math.min(radius, width / 4);
+    
+    if (segmentHeight < r * 2) {
+        // Too small for rounded corners
+        return `M ${barX},${cumulativeY} v-${segmentHeight} h${width} v${segmentHeight} z`;
+    } else if (isTop && isBottom) {
+        // Only segment - round top corners
+        return `M ${barX},${cumulativeY} v-${segmentHeight - r} a${r},${r} 0 0 1 ${r},-${r} h${width - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${segmentHeight - r} z`;
+    } else if (isTop) {
+        // Top segment - round top corners only
+        return `M ${barX},${cumulativeY} v-${segmentHeight - r} a${r},${r} 0 0 1 ${r},-${r} h${width - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${segmentHeight - r} z`;
+    } else {
+        // Bottom or middle segment - no rounding
+        return `M ${barX},${cumulativeY} v-${segmentHeight} h${width} v${segmentHeight} z`;
+    }
+}
+
+/**
+ * Render model segments for a single bar
+ */
+function renderBarSegments(barGroup, barX, barY, barH, barWidth, usage, models) {
+    const r = Math.min(3, barWidth / 4);
+    const getTokens = (v) => typeof v === 'number' ? v : (v.total || 0);
+    const modelEntries = Object.entries(models).sort((a, b) => getTokens(b[1]) - getTokens(a[1]));
+
+    let cumulativeY = barY + barH;
+
+    for (const [modelId, modelData] of modelEntries) {
+        const tokens = getTokens(modelData);
+        const segmentHeight = (tokens / usage) * barH;
+        const segmentY = cumulativeY - segmentHeight;
+
+        const isBottom = cumulativeY === barY + barH;
+        const isTop = segmentY <= barY + 0.01;
+
+        const segmentPath = createSegmentPath(barX, cumulativeY, segmentHeight, barWidth, r, isTop, isBottom);
+        const color = getModelColor(modelId);
+
+        const segment = createSVGElement('path', {
+            d: segmentPath,
+            fill: color,
+            opacity: '1',
+            'shape-rendering': 'geometricPrecision',
+            'pointer-events': 'none'
+        });
+        barGroup.appendChild(segment);
+
+        cumulativeY = segmentY;
+    }
+}
+
+/**
+ * Setup hover handlers for chart bar
+ */
+function setupBarHoverHandlers(cursor, data) {
+    cursor.addEventListener('mouseenter', async () => {
+        cursor.setAttribute('fill', CHART_COLORS.cursor);
+        showTooltip(data);
+    });
+    cursor.addEventListener('mousemove', (e) => {
+        moveTooltip(e);
+    });
+    cursor.addEventListener('mouseleave', () => {
+        cursor.setAttribute('fill', 'transparent');
+        hideTooltip();
+    });
+}
+
+/**
+ * Render a single bar in the chart
+ */
+function renderBar(barGroup, textGroup, cursorGroup, d, i, margin, chartHeight, niceMax, totalBarWidth, barWidth, labelInterval, height) {
+    const slotX = margin.left + (i * totalBarWidth);
+    const barX = slotX + ((totalBarWidth - barWidth) / 2);
+    const barH = (d.usage / niceMax) * chartHeight;
+    const barY = margin.top + (chartHeight - barH);
+
+    // Hover area
+    const cursor = createSVGElement('rect', {
+        x: slotX,
+        y: margin.top,
+        width: totalBarWidth,
+        height: chartHeight,
+        fill: 'transparent',
+        opacity: '0.1',
+        class: 'cursor-rect',
+        style: 'cursor: pointer;'
+    });
+    setupBarHoverHandlers(cursor, d);
+    cursorGroup.appendChild(cursor);
+
+    // Bar rendering
+    const w = barWidth;
+    const r = Math.min(3, barWidth / 4);
+
+    // Build the outer bar path (with rounded top corners)
+    let outerPathD;
+    if (barH < r * 2) {
+        outerPathD = `M ${barX},${barY + barH} v-${barH} h${w} v${barH} z`;
+    } else {
+        outerPathD = `M ${barX},${barY + barH} v-${barH - r} a${r},${r} 0 0 1 ${r},-${r} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${barH - r} z`;
+    }
+
+    // Draw filled segments for each model
+    if (d.models && Object.keys(d.models).length > 0 && d.usage > 0) {
+        renderBarSegments(barGroup, barX, barY, barH, w, d.usage, d.models);
+    }
+
+    // Draw outer bar border
+    const outerPath = createSVGElement('path', {
+        d: outerPathD,
+        fill: 'none',
+        stroke: CHART_COLORS.bar,
+        'stroke-width': '1.5',
+        'shape-rendering': 'geometricPrecision',
+        'pointer-events': 'none'
+    });
+    barGroup.appendChild(outerPath);
+
+    // X labels
+    if (i % labelInterval === 0) {
+        const label = createSVGElement('text', {
+            x: barX + barWidth / 2,
+            y: height - 5,
+            'text-anchor': 'middle',
+            fill: CHART_COLORS.text,
+            opacity: '0.6',
+            'font-size': '10',
+            'font-family': 'ui-sans-serif, system-ui, sans-serif'
+        });
+        label.textContent = d.displayDate;
+        textGroup.appendChild(label);
+    }
+}
+
+/**
+ * Render the bar chart
+ */
+function renderChart() {
+    const container = document.getElementById('token-usage-chart');
+    if (!container) return;
+
+    container.innerHTML = '';
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (width === 0 || height === 0) return;
+    if (chartData.length === 0) {
+        container.innerHTML = '<div class="tu-text-center tu-text-body tu-opacity-50" style="padding: 40px;">No usage data yet</div>';
+        return;
+    }
+
+    const margin = CONFIG.CHART_MARGIN;
+    const chartWidth = width - margin.left - margin.right;
+    const chartHeight = height - margin.top - margin.bottom;
+
+    const svg = createSVGElement('svg', {
+        width: width,
+        height: height,
+        viewBox: `0 0 ${width} ${height}`,
+        style: 'display: block; max-width: 100%;'
+    });
+
+    const cursorGroup = createSVGElement('g', { class: 'cursors' });
+    const gridGroup = createSVGElement('g', { class: 'grid' });
+    const barGroup = createSVGElement('g', { class: 'bars' });
+    const textGroup = createSVGElement('g', { class: 'labels' });
+
+    svg.appendChild(cursorGroup);
+    svg.appendChild(gridGroup);
+    svg.appendChild(barGroup);
+    svg.appendChild(textGroup);
+
+    // Y Scale
+    const maxUsage = Math.max(...chartData.map(d => d.usage), 1);
+    const { niceMax, step, yScale } = calculateYScale(maxUsage, chartHeight);
+
+    // Grid and Y axis
+    renderYAxis(gridGroup, textGroup, niceMax, step, yScale, margin, chartWidth);
 
     // Bars
     const totalBarWidth = chartWidth / chartData.length;
     let barWidth = totalBarWidth * 0.8;
     if (barWidth > CONFIG.CHART_BAR_MAX_WIDTH) barWidth = CONFIG.CHART_BAR_MAX_WIDTH;
-    const actualGap = totalBarWidth - barWidth;
     const labelInterval = CONFIG.CHART_LABEL_INTERVAL[currentChartRange] || 3;
 
     chartData.forEach((d, i) => {
-        const slotX = margin.left + (i * totalBarWidth);
-        const barX = slotX + (actualGap / 2);
-        const barH = (d.usage / niceMax) * chartHeight;
-        const barY = margin.top + (chartHeight - barH);
-
-        // Hover area
-        const cursor = createSVGElement('rect', {
-            x: slotX,
-            y: margin.top,
-            width: totalBarWidth,
-            height: chartHeight,
-            fill: 'transparent',
-            opacity: '0.1',
-            class: 'cursor-rect',
-            style: 'cursor: pointer;'
-        });
-
-        cursor.addEventListener('mouseenter', async () => {
-            cursor.setAttribute('fill', CHART_COLORS.cursor);
-            showTooltip(d);
-        });
-        cursor.addEventListener('mousemove', (e) => {
-            moveTooltip(e);
-        });
-        cursor.addEventListener('mouseleave', () => {
-            cursor.setAttribute('fill', 'transparent');
-            hideTooltip();
-        });
-        cursorGroup.appendChild(cursor);
-
-        // Bar rendering - fill segments with model colors
-        const r = Math.min(3, barWidth / 4);
-        const h = Math.max(0, barH);
-        const w = barWidth;
-
-        // Build the outer bar path (with rounded top corners)
-        let outerPathD;
-        if (h < r * 2) {
-            outerPathD = `M ${barX},${barY + h} v-${h} h${w} v${h} z`;
-        } else {
-            outerPathD = `M ${barX},${barY + h} v-${h - r} a${r},${r} 0 0 1 ${r},-${r} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${h - r} z`;
-        }
-
-        // Draw filled segments for each model
-        if (d.models && Object.keys(d.models).length > 0 && d.usage > 0) {
-            // Extract total from new object format or use number directly for legacy
-            const getTokens = (v) => typeof v === 'number' ? v : (v.total || 0);
-            const modelEntries = Object.entries(d.models).sort((a, b) => getTokens(b[1]) - getTokens(a[1])); // Sort by usage desc
-
-            let cumulativeY = barY + h; // Start from bottom
-
-            for (const [modelId, modelData] of modelEntries) {
-                const tokens = getTokens(modelData);
-                const segmentHeight = (tokens / d.usage) * h;
-                const segmentY = cumulativeY - segmentHeight;
-
-                // Create path for this segment with rounded corners for top segment
-                let segmentPath;
-                const isBottom = cumulativeY === barY + h;
-                const isTop = segmentY <= barY + 0.01; // Small epsilon for float comparison
-
-                if (segmentHeight < r * 2) {
-                    // Too small for rounded corners
-                    segmentPath = `M ${barX},${cumulativeY} v-${segmentHeight} h${w} v${segmentHeight} z`;
-                } else if (isTop && isBottom) {
-                    // Only segment - round top corners
-                    segmentPath = `M ${barX},${cumulativeY} v-${segmentHeight - r} a${r},${r} 0 0 1 ${r},-${r} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${segmentHeight - r} z`;
-                } else if (isTop) {
-                    // Top segment - round top corners only
-                    segmentPath = `M ${barX},${cumulativeY} v-${segmentHeight - r} a${r},${r} 0 0 1 ${r},-${r} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${segmentHeight - r} z`;
-                } else {
-                    // Bottom or middle segment - no rounding
-                    segmentPath = `M ${barX},${cumulativeY} v-${segmentHeight} h${w} v${segmentHeight} z`;
-                }
-
-                const color = getModelColor(modelId);
-                const segment = createSVGElement('path', {
-                    d: segmentPath,
-                    fill: color,
-                    opacity: '1',
-                    'shape-rendering': 'geometricPrecision',
-                    'pointer-events': 'none'
-                });
-                barGroup.appendChild(segment);
-
-                cumulativeY = segmentY;
-            }
-        }
-
-        // Draw outer bar border (on top of segments)
-        const outerPath = createSVGElement('path', {
-            d: outerPathD,
-            fill: 'none',
-            stroke: CHART_COLORS.bar,
-            'stroke-width': '1.5',
-            'shape-rendering': 'geometricPrecision',
-            'pointer-events': 'none'
-        });
-        barGroup.appendChild(outerPath);
-
-
-        // X labels
-        if (i % labelInterval === 0) {
-            const label = createSVGElement('text', {
-                x: barX + barWidth / 2,
-                y: height - 5,
-                'text-anchor': 'middle',
-                fill: CHART_COLORS.text,
-                opacity: '0.6',
-                'font-size': '10',
-                'font-family': 'ui-sans-serif, system-ui, sans-serif'
-            });
-            label.textContent = d.displayDate;
-            textGroup.appendChild(label);
-        }
+        renderBar(barGroup, textGroup, cursorGroup, d, i, margin, chartHeight, niceMax, totalBarWidth, barWidth, labelInterval, height);
     });
 
     container.appendChild(svg);
