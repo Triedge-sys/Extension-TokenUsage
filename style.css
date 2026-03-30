@@ -1,32 +1,565 @@
 /* Token Usage Tracker Extension Styles */
 
-/* Active state for range buttons */
+/* ========================================
+   Layout & Flexbox Utilities
+   ======================================== */
+
+/* Flex containers */
+.tu-flex {
+    display: flex;
+}
+
+.tu-flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tu-flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tu-flex-start {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Flex gaps */
+.tu-gap-4 {
+    gap: 4px;
+}
+
+.tu-gap-6 {
+    gap: 6px;
+}
+
+.tu-gap-8 {
+    gap: 8px;
+}
+
+.tu-gap-10 {
+    gap: 10px;
+}
+
+/* ========================================
+   Typography
+   ======================================== */
+
+/* Font sizes */
+.tu-text-xs {
+    font-size: 8px;
+}
+
+.tu-text-sm {
+    font-size: 9px;
+}
+
+.tu-text-base {
+    font-size: 10px;
+}
+
+.tu-text-lg {
+    font-size: 11px;
+}
+
+.tu-text-xl {
+    font-size: 12px;
+}
+
+.tu-text-2xl {
+    font-size: 14px;
+}
+
+.tu-text-3xl {
+    font-size: 18px;
+}
+
+/* Font weights */
+.tu-font-normal {
+    font-weight: 400;
+}
+
+.tu-font-semibold {
+    font-weight: 600;
+}
+
+.tu-font-bold {
+    font-weight: 700;
+}
+
+/* Text colors */
+.tu-text-body {
+    color: var(--SmartThemeBodyColor);
+}
+
+.tu-text-body-dim {
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.8;
+}
+
+.tu-text-body-fade {
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.5;
+}
+
+.tu-text-success {
+    color: #4ade80;
+}
+
+.tu-text-warning {
+    color: #fbbf24;
+}
+
+/* Text overflow */
+.tu-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ========================================
+   Colors & Backgrounds
+   ======================================== */
+
+.tu-bg-input {
+    background: var(--SmartThemeInputColor);
+}
+
+.tu-bg-dark {
+    background: #1a1a1a !important;
+    background-color: #1a1a1a !important;
+}
+
+.tu-bg-dark-header {
+    background: #2a2a2a !important;
+    background-color: #2a2a2a !important;
+}
+
+/* Borders */
+.tu-border {
+    border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.tu-border-thick {
+    border: 2px solid var(--SmartThemeBorderColor);
+}
+
+.tu-border-top {
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.tu-border-top-thick {
+    border-top: 2px solid var(--SmartThemeBorderColor);
+}
+
+/* Border radius */
+.tu-rounded-sm {
+    border-radius: 2px;
+}
+
+.tu-rounded {
+    border-radius: 4px;
+}
+
+.tu-rounded-md {
+    border-radius: 6px;
+}
+
+.tu-rounded-lg {
+    border-radius: 8px;
+}
+
+/* ========================================
+   Spacing
+   ======================================== */
+
+.tu-p-2 {
+    padding: 2px;
+}
+
+.tu-p-4 {
+    padding: 4px;
+}
+
+.tu-p-6 {
+    padding: 6px;
+}
+
+.tu-p-8 {
+    padding: 8px;
+}
+
+.tu-p-10 {
+    padding: 10px;
+}
+
+.tu-p-12 {
+    padding: 12px;
+}
+
+.tu-p-16 {
+    padding: 16px;
+}
+
+.tu-py-1 {
+    padding: 1px 2px;
+}
+
+.tu-px-8 {
+    padding: 4px 8px;
+}
+
+/* ========================================
+   Opacity
+   ======================================== */
+
+.tu-opacity-30 {
+    opacity: 0.3;
+}
+
+.tu-opacity-50 {
+    opacity: 0.5;
+}
+
+.tu-opacity-60 {
+    opacity: 0.6;
+}
+
+.tu-opacity-80 {
+    opacity: 0.8;
+}
+
+/* ========================================
+   Components
+   ======================================== */
+
+/* Stat cards */
+.tu-stat-card {
+    background: var(--SmartThemeInputColor);
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    overflow: hidden;
+    display: flex;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.tu-stat-card:hover {
+    background: var(--SmartThemeInputColor);
+    filter: brightness(1.1);
+}
+
+/* Model config row */
+.model-config-row {
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+/* Price inputs */
+.tu-price-input {
+    width: 28px;
+    padding: 1px 2px;
+    font-size: 8px;
+    border-radius: 2px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeInputColor);
+    color: var(--SmartThemeBodyColor);
+    flex-shrink: 0;
+}
+
+/* Color picker */
+.tu-color-picker {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    border-radius: 4px;
+}
+
+/* Chart container */
+#token-usage-chart {
+    width: 100%;
+    height: 320px;
+    background: var(--SmartThemeInputColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* Stats grid */
+.tu-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+}
+
+/* Header grid for popup tables */
+.tu-popup-header-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 6px;
+    background: var(--SmartThemeInputColor);
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+/* Model row in popup */
+.tu-popup-model-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    font-size: 11px;
+}
+
+/* Popup footer total */
+.tu-popup-total-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 10px 6px 4px;
+    border-top: 2px solid var(--SmartThemeBorderColor);
+    margin-top: 8px;
+    font-weight: 600;
+}
+
+/* Popup base styles */
+.tu-popup {
+    position: absolute;
+    top: 100px;
+    background: #1a1a1a !important;
+    background-color: #1a1a1a !important;
+    border: 2px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    padding: 0;
+    width: 400px;
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 99999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+}
+
+.tu-popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #2a2a2a !important;
+    background-color: #2a2a2a !important;
+    border-radius: 6px 6px 0 0;
+    cursor: move;
+}
+
+.tu-popup-header h3 {
+    margin: 0;
+    color: var(--SmartThemeBodyColor);
+    font-size: 14px;
+}
+
+.tu-popup-close-btn {
+    background: transparent;
+    border: none;
+    color: var(--SmartThemeBodyColor);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+}
+
+.tu-popup-content {
+    padding: 12px;
+    background: #1a1a1a !important;
+    background-color: #1a1a1a !important;
+}
+
+.tu-popup-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.5;
+}
+
+/* Tooltip */
+.tu-tooltip {
+    position: fixed;
+    display: none;
+    background: rgba(0,0,0,0.9);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+#token-usage-tooltip {
+    /* Specific ID selector for compatibility */
+}
+
+/* Currency selector */
+#token-usage-currency-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    margin-top: 8px;
+    background: var(--SmartThemeInputColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+}
+
+#token-usage-currency-selector select {
+    padding: 4px 8px;
+    font-size: 10px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeInputColor);
+    color: var(--SmartThemeBodyColor);
+    max-width: 200px;
+    cursor: pointer;
+}
+
+/* Range buttons container */
+.tu-range-buttons {
+    display: inline-flex;
+    background: var(--SmartThemeInputColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    padding: 2px;
+}
+
+/* Reset dialog */
+#token-usage-reset-dialog {
+    position: absolute;
+    top: 150px;
+    right: 50%;
+    transform: translateX(50%);
+    background: #1a1a1a !important;
+    background-color: #1a1a1a !important;
+    border: 2px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    padding: 0;
+    width: 400px;
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 99999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+}
+
+#token-usage-reset-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #2a2a2a !important;
+    background-color: #2a2a2a !important;
+    border-radius: 8px 8px 0 0;
+    cursor: move;
+}
+
+#token-usage-reset-dialog h3 {
+    margin: 0;
+    color: var(--SmartThemeBodyColor);
+    font-size: 14px;
+}
+
+/* Inline drawer styles */
+.inline-drawer {
+    margin-top: 10px;
+}
+
+.inline-drawer-toggle {
+    padding: 4px 0 4px 8px;
+}
+
+.inline-drawer-icon.down {
+    /* Existing icon styles */
+}
+
+/* ========================================
+   Utility Classes
+   ======================================== */
+
+/* Text alignment */
+.tu-text-center {
+    text-align: center;
+}
+
+.tu-text-right {
+    text-align: right;
+}
+
+/* Min width */
+.tu-min-w-0 {
+    min-width: 0;
+}
+
+/* Flex properties */
+.tu-flex-1 {
+    flex: 1;
+}
+
+.tu-flex-shrink-0 {
+    flex-shrink: 0;
+}
+
+/* Cursor */
+.tu-cursor-pointer {
+    cursor: pointer;
+}
+
+.tu-cursor-move {
+    cursor: move;
+}
+
+/* White space */
+.tu-whitespace-nowrap {
+    white-space: nowrap;
+}
+
+/* Overflow */
+.tu-overflow-hidden {
+    overflow: hidden;
+}
+
+/* ========================================
+   Active state for range buttons
+   ======================================== */
+
 .range-btn.active {
-  background-color: white;
-  color: #0f172a; /* slate-900 */
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.05),
-    0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    background-color: white;
+    color: #0f172a; /* slate-900 */
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.05),
+        0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
 /* Transition for the hover cursor rect in the graph */
 .cursor-rect {
-  transition: fill 0.1s;
+    transition: fill 0.1s;
 }
 
 /* Hide number input spin buttons */
 #token-usage-model-colors-grid input[type="number"]::-webkit-outer-spin-button,
 #token-usage-model-colors-grid input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 #token-usage-model-colors-grid input[type="number"] {
-  -moz-appearance: textfield;
-  appearance: textfield;
+    -moz-appearance: textfield;
+    appearance: textfield;
 }
 
-/* Compact model config row */
-.model-config-row {
-  padding: 2px 0;
-}

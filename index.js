@@ -17,6 +17,109 @@ import { getGeneratingModel } from '../../../../script.js';
 
 const extensionName = 'token-usage-tracker';
 
+/**
+ * Extension configuration constants
+ */
+const CONFIG = {
+    // API URLs
+    CURRENCY_API_URL: 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json',
+    
+    // Timing constants (milliseconds)
+    MILLISECONDS_PER_DAY: 24 * 60 * 60 * 1000,
+    CACHE_DURATION_MS: 24 * 60 * 60 * 1000,  // 24 hours for currency cache
+    DEBOUNCE_DELAY_MS: 500,                   // 500ms for price input debounce
+    RESIZE_DEBOUNCE_MS: 100,                  // 100ms for chart resize
+    PRE_CONTINUE_MAX_WAIT_MS: 5000,           // 5 seconds max wait for pre-continue tokens
+    PRE_CONTINUE_WAIT_INTERVAL_MS: 50,        // 50ms polling interval
+    INITIAL_STATS_EMIT_DELAY_MS: 1000,        // 1 second after init
+    CONNECTION_MANAGER_PATCH_TIMEOUT_MS: 30000, // 30 seconds for patch polling
+    
+    // Chart configuration
+    CHART_RANGES: {
+        SHORT: 7,
+        MEDIUM: 30,
+        LONG: 90
+    },
+    CHART_COLORS: {
+        bar: 'var(--SmartThemeBorderColor)',
+        text: 'var(--SmartThemeBodyColor)',
+        grid: 'var(--SmartThemeBorderColor)',
+        cursor: 'var(--SmartThemeBodyColor)'
+    },
+    CHART_MARGIN: { top: 10, right: 10, bottom: 25, left: 45 },
+    CHART_BAR_MAX_WIDTH: 40,
+    CHART_LABEL_INTERVAL: { 7: 1, 30: 3, 90: 7 },
+    
+    // Token estimation
+    IMAGE_TOKEN_ESTIMATE: 765,        // OpenAI high detail mode 1024x1024
+    MESSAGE_OVERHEAD_TOKENS: 3,       // Per message boundary overhead
+    CHAR_PER_TOKEN_ESTIMATE: 3.35,    // Fallback character-based estimate
+    
+    // UI selectors
+    SELECTORS: {
+        CHART_CONTAINER: '#token-usage-chart',
+        SETTINGS_CONTAINER: '#extensions_settings2',
+        SETTINGS_CONTAINER_FALLBACK: '#extensions_settings',
+        TOOLTIP: '#token-usage-tooltip',
+        MODEL_COLORS_GRID: '#token-usage-model-colors-grid',
+        CURRENCY_TOGGLE: '#token-usage-currency-toggle',
+        CURRENCY_SELECTOR: '#token-usage-currency-selector',
+        RESET_BUTTON: '#token-usage-reset-all',
+        WEEK_CARD: '#token-usage-week-card',
+        MONTH_CARD: '#token-usage-month-card',
+        ALLTIME_CARD: '#token-usage-alltime-card'
+    },
+    
+    // CSS classes
+    CLASSES: {
+        RANGE_BUTTON: 'token-usage-range-btn',
+        ACTIVE_BUTTON: 'active',
+        MODEL_CONFIG_ROW: 'model-config-row',
+        CURSOR_RECT: 'cursor-rect'
+    },
+    
+    // Event names
+    EVENTS: {
+        USAGE_UPDATED: 'tokenUsageUpdated'
+    },
+    
+    // Currency
+    DEFAULT_CURRENCY: 'USD',
+    POPULAR_CURRENCIES: ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'RUB', 'KRW', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'PLN', 'UAH', 'KZT'],
+    
+    // Currency symbols
+    CURRENCY_SYMBOLS: {
+        'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'CNY': '¥', 'RUB': '₽',
+        'KRW': '₩', 'INR': '₹', 'BRL': 'R$', 'AUD': 'A$', 'CAD': 'C$', 'CHF': 'Fr',
+        'HKD': 'HK$', 'SGD': 'S$', 'SEK': 'kr', 'NOK': 'kr', 'DKK': 'kr', 'PLN': 'zł',
+        'TRY': '₺', 'ZAR': 'R', 'MXN': '$', 'ARS': '$', 'CLP': '$', 'COP': '$',
+        'PEN': 'S/', 'UYU': '$U', 'THB': '฿', 'VND': '₫', 'IDR': 'Rp', 'MYR': 'RM',
+        'PHP': '₱', 'AED': 'د.إ', 'SAR': '﷼', 'ILS': '₪', 'EGP': 'E£', 'NGN': '₦',
+        'KES': 'KSh', 'GHS': '₵', 'UAH': '₴', 'KZT': '₸', 'UZS': "so'm", 'AZN': '₼',
+        'GEL': '₾', 'AMD': '֏', 'BYN': 'Br', 'MDL': 'L', 'RON': 'lei', 'BGN': 'лв',
+        'RSD': 'дин.', 'HRK': 'kn', 'CZK': 'Kč', 'HUF': 'Ft', 'ISK': 'kr',
+        'TWD': 'NT$', 'NZD': 'NZ$', 'FJD': 'FJ$'
+    },
+    
+    // Generation types
+    GENERATION_TYPES: {
+        NON_API: ['command', 'first_message'],
+        CONTINUE: 'continue',
+        QUIET: 'quiet',
+        IMPERSONATE: 'impersonate'
+    },
+    
+    // Non-API message types to skip
+    NON_API_MESSAGE_TYPES: ['command', 'first_message'],
+    
+    // Popup configuration
+    POPUP: {
+        WIDTH: 400,
+        MAX_HEIGHT: '70vh',
+        Z_INDEX: 99999
+    }
+};
+
 const defaultSettings = {
     showInTopBar: true,
     modelColors: {}, // { "gpt-4o": "#6366f1", "claude-3-opus": "#8b5cf6", ... }
@@ -117,153 +220,209 @@ function getSettings() {
 }
 
 /**
- * Currency rates cache
- * Loaded from API and cached in memory for the session
+ * CurrencyService - handles currency rates loading, caching, and conversion
  */
+class CurrencyService {
+    constructor() {
+        this.ratesCache = null;
+        this.cacheDate = null;
+    }
+
+    /**
+     * Load currency rates from API with in-memory caching
+     * Rates are cached for 24 hours to avoid unnecessary requests
+     * @returns {Promise<Object|null>} Currency rates object or null on error
+     */
+    async loadRates() {
+        const today = new Date().toDateString();
+
+        // Return cached rates if still valid (same day)
+        if (this.ratesCache && this.cacheDate === today) {
+            console.log('[Token Usage Tracker] Using cached currency rates');
+            return this.ratesCache;
+        }
+
+        try {
+            console.log('[Token Usage Tracker] Fetching currency rates from API...');
+            const response = await fetch(CONFIG.CURRENCY_API_URL);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+
+            // Cache the rates and date
+            this.ratesCache = data.usd || {};
+            this.cacheDate = new Date().toDateString();
+
+            console.log(`[Token Usage Tracker] Loaded ${Object.keys(this.ratesCache).length} currency rates`);
+            return this.ratesCache;
+        } catch (error) {
+            console.error('[Token Usage Tracker] Error loading currency rates:', error);
+            // Return cached rates even if expired, if available
+            if (this.ratesCache) {
+                console.log('[Token Usage Tracker] Using expired cached rates due to fetch error');
+                return this.ratesCache;
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Get available currencies from loaded rates
+     * @returns {string[]} Array of currency codes
+     */
+    getAvailableCurrencies() {
+        if (!this.ratesCache) return [];
+        return Object.keys(this.ratesCache).sort();
+    }
+
+    /**
+     * Check if rates are loaded
+     * @returns {boolean} True if rates are available
+     */
+    isLoaded() {
+        return this.ratesCache !== null;
+    }
+
+    /**
+     * Convert USD amount to selected currency
+     * @param {number} usdAmount - Amount in USD
+     * @param {string} targetCurrency - Target currency code
+     * @returns {number} Amount in target currency
+     */
+    convertToCurrency(usdAmount, targetCurrency) {
+        if (targetCurrency === 'USD') return usdAmount;
+        if (!this.ratesCache) return usdAmount;
+
+        const rate = this.ratesCache[targetCurrency.toLowerCase()];
+        if (!rate) {
+            console.warn(`[Token Usage Tracker] No rate found for currency: ${targetCurrency}`);
+            return usdAmount;
+        }
+
+        return usdAmount * rate;
+    }
+
+    /**
+     * Format currency amount with appropriate symbol/notation
+     * @param {number} amount - Amount
+     * @param {string} currency - Currency code
+     * @returns {string} Formatted string
+     */
+    format(amount, currency) {
+        const symbol = CONFIG.CURRENCY_SYMBOLS[currency] || currency + ' ';
+        const formatted = amount.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 4
+        });
+
+        return symbol + formatted;
+    }
+
+    /**
+     * Convert and format USD amount to target currency
+     * @param {number} usdAmount - Amount in USD
+     * @param {string} targetCurrency - Target currency code
+     * @returns {string} Formatted string in target currency
+     */
+    convertAndFormat(usdAmount, targetCurrency) {
+        const converted = this.convertToCurrency(usdAmount, targetCurrency);
+        return this.format(converted, targetCurrency);
+    }
+
+    /**
+     * Get exchange rate for display
+     * @param {string} currency - Target currency
+     * @returns {number} Exchange rate from USD
+     */
+    getRate(currency) {
+        if (!this.ratesCache) return 1;
+        return this.ratesCache[currency.toLowerCase()] || 1;
+    }
+}
+
+// Create singleton instance
+const currencyService = new CurrencyService();
+
+/**
+ * ErrorHandler - centralized error handling with logging and fallback values
+ */
+class ErrorHandler {
+    /**
+     * Handle an error with logging and optional fallback value
+     * @param {string} context - Where the error occurred (e.g., 'counting tokens')
+     * @param {Error} error - The error object
+     * @param {*} fallbackValue - Optional fallback value to return
+     * @returns {*} fallbackValue if provided, undefined otherwise
+     */
+    static handle(context, error, fallbackValue = undefined) {
+        console.error(`[Token Usage Tracker] Error ${context}:`, error);
+        return fallbackValue;
+    }
+
+    /**
+     * Handle error with toast notification
+     * @param {string} message - User-friendly error message
+     * @param {Error} error - The error object
+     */
+    static notify(message, error) {
+        console.error(`[Token Usage Tracker] ${message}:`, error);
+        if (typeof toastr !== 'undefined') {
+            toastr.error(message);
+        }
+    }
+
+    /**
+     * Silently handle error with logging only (no user notification)
+     * @param {string} context - Where the error occurred
+     * @param {Error} error - The error object
+     * @param {*} fallbackValue - Optional fallback value
+     * @returns {*} fallbackValue if provided, undefined otherwise
+     */
+    static silent(context, error, fallbackValue = undefined) {
+        console.debug(`[Token Usage Tracker] ${context}:`, error?.message || error);
+        return fallbackValue;
+    }
+}
+
+// Legacy variables for backward compatibility
 let currencyRatesCache = null;
 let currencyCacheDate = null;
-const CURRENCY_API_URL = 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json';
 
 /**
- * Load currency rates from API with in-memory caching
- * Rates are cached for 24 hours to avoid unnecessary requests
- * @returns {Promise<Object|null>} Currency rates object or null on error
+ * Load currency rates from API with in-memory caching (legacy wrapper)
+ * @deprecated Use currencyService.loadRates() directly
  */
 async function loadCurrencyRates() {
-    const today = new Date().toDateString();
-    
-    // Return cached rates if still valid (same day)
-    if (currencyRatesCache && currencyCacheDate === today) {
-        console.log('[Token Usage Tracker] Using cached currency rates');
-        return currencyRatesCache;
-    }
-    
-    try {
-        console.log('[Token Usage Tracker] Fetching currency rates from API...');
-        const response = await fetch(CURRENCY_API_URL);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        
-        // Cache the rates and date
-        currencyRatesCache = data.usd || {};
-        currencyCacheDate = new Date().toDateString();
-        
-        console.log(`[Token Usage Tracker] Loaded ${Object.keys(currencyRatesCache).length} currency rates`);
-        return currencyRatesCache;
-    } catch (error) {
-        console.error('[Token Usage Tracker] Error loading currency rates:', error);
-        // Return cached rates even if expired, if available
-        if (currencyRatesCache) {
-            console.log('[Token Usage Tracker] Using expired cached rates due to fetch error');
-            return currencyRatesCache;
-        }
-        return null;
-    }
+    const result = await currencyService.loadRates();
+    // Sync to legacy globals
+    currencyRatesCache = currencyService.ratesCache;
+    currencyCacheDate = currencyService.cacheDate;
+    return result;
 }
 
 /**
- * Get available currencies from loaded rates
- * @returns {string[]} Array of currency codes
+ * Get available currencies from loaded rates (legacy wrapper)
+ * @deprecated Use currencyService.getAvailableCurrencies() directly
  */
 function getAvailableCurrencies() {
-    if (!currencyRatesCache) return [];
-    return Object.keys(currencyRatesCache).sort();
+    return currencyService.getAvailableCurrencies();
 }
 
 /**
- * Convert USD amount to selected currency
- * @param {number} usdAmount - Amount in USD
- * @param {string} targetCurrency - Target currency code
- * @returns {number} Amount in target currency
+ * Convert USD amount to selected currency (legacy wrapper)
+ * @deprecated Use currencyService.convertToCurrency() directly
  */
 function convertUSDtoCurrency(usdAmount, targetCurrency) {
-    if (targetCurrency === 'USD') return usdAmount;
-    if (!currencyRatesCache) return usdAmount;
-    
-    const rate = currencyRatesCache[targetCurrency.toLowerCase()];
-    if (!rate) {
-        console.warn(`[Token Usage Tracker] No rate found for currency: ${targetCurrency}`);
-        return usdAmount;
-    }
-    
-    return usdAmount * rate;
+    return currencyService.convertToCurrency(usdAmount, targetCurrency);
 }
 
 /**
- * Format currency amount with appropriate symbol/notation
- * @param {number} amount - Amount
- * @param {string} currency - Currency code
- * @returns {string} Formatted string
+ * Format currency amount with appropriate symbol/notation (legacy wrapper)
+ * @deprecated Use currencyService.format() directly
  */
 function formatCurrency(amount, currency) {
-    const symbols = {
-        'USD': '$',
-        'EUR': '€',
-        'GBP': '£',
-        'JPY': '¥',
-        'CNY': '¥',
-        'RUB': '₽',
-        'KRW': '₩',
-        'INR': '₹',
-        'BRL': 'R$',
-        'AUD': 'A$',
-        'CAD': 'C$',
-        'CHF': 'Fr',
-        'HKD': 'HK$',
-        'SGD': 'S$',
-        'SEK': 'kr',
-        'NOK': 'kr',
-        'DKK': 'kr',
-        'PLN': 'zł',
-        'TRY': '₺',
-        'ZAR': 'R',
-        'MXN': '$',
-        'ARS': '$',
-        'CLP': '$',
-        'COP': '$',
-        'PEN': 'S/',
-        'UYU': '$U',
-        'THB': '฿',
-        'VND': '₫',
-        'IDR': 'Rp',
-        'MYR': 'RM',
-        'PHP': '₱',
-        'AED': 'د.إ',
-        'SAR': '﷼',
-        'ILS': '₪',
-        'EGP': 'E£',
-        'NGN': '₦',
-        'KES': 'KSh',
-        'GHS': '₵',
-        'UAH': '₴',
-        'KZT': '₸',
-        'UZS': "so'm",
-        'AZN': '₼',
-        'GEL': '₾',
-        'AMD': '֏',
-        'BYN': 'Br',
-        'MDL': 'L',
-        'RON': 'lei',
-        'BGN': 'лв',
-        'RSD': 'дин.',
-        'HRK': 'kn',
-        'CZK': 'Kč',
-        'HUF': 'Ft',
-        'ISK': 'kr',
-        'TWD': 'NT$',
-        'NZD': 'NZ$',
-        'FJD': 'FJ$',
-    };
-    
-    const symbol = symbols[currency] || currency + ' ';
-    const formatted = amount.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 4
-    });
-    
-    return symbol + formatted;
+    return currencyService.format(amount, currency);
 }
 
 /**
@@ -293,7 +452,7 @@ function getHourKey(date = new Date()) {
 function getWeekKey(date = new Date()) {
     const year = date.getFullYear();
     const startOfYear = new Date(year, 0, 1);
-    const days = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
+    const days = Math.floor((date.getTime() - startOfYear.getTime()) / CONFIG.MILLISECONDS_PER_DAY);
     const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
     return `${year}-W${String(weekNumber).padStart(2, '0')}`;
 }
@@ -333,7 +492,7 @@ async function countTokens(text) {
     } catch (error) {
         console.error('[Token Usage Tracker] Error counting tokens:', error);
         // Ultimate fallback: character-based estimate
-        return Math.ceil(text.length / 3.35);
+        return Math.ceil(text.length / CONFIG.CHAR_PER_TOKEN_ESTIMATE);
     }
 }
 
@@ -515,12 +674,44 @@ function getChatUsage(chatId) {
     return settings.usage.byChat[chatId] || { input: 0, output: 0, total: 0, messageCount: 0 };
 }
 
+/**
+ * Pending state for token counting across async operations
+ * Encapsulates state that was previously global variables
+ */
+class PendingTokenState {
+    constructor() {
+        this.inputTokensPromise = null;
+        this.modelId = null;
+        this.preContinueCount = 0;
+        this.isPreContinueReady = false;
+        this.isQuietGeneration = false;
+        this.isImpersonateGeneration = false;
+        this.isTrackingBackground = false;
+    }
 
-/** @type {Promise<number>|null} Promise that resolves to input token count - started early, awaited later */
-let pendingInputTokensPromise = null;
-let pendingModelId = null;
-// For 'continue' type generations, track the pre-continue token count so we can compute the delta
-let preContinueTokenCount = 0;
+    /**
+     * Reset all state to initial values
+     */
+    reset() {
+        this.inputTokensPromise = null;
+        this.modelId = null;
+        this.preContinueCount = 0;
+        this.isPreContinueReady = false;
+        this.isQuietGeneration = false;
+        this.isImpersonateGeneration = false;
+        this.isTrackingBackground = false;
+    }
+
+    /**
+     * Reset specifically for continue generation state
+     */
+    resetContinueState() {
+        this.preContinueCount = 0;
+        this.isPreContinueReady = false;
+    }
+}
+
+const pendingState = new PendingTokenState();
 
 /**
  * Count input tokens from the full prompt context (async helper)
@@ -551,7 +742,7 @@ async function countInputTokens(generate_data) {
                             if (part.type === 'image_url' || part.type === 'image') {
                                 // Estimate image tokens since we can't be precise without knowing the exact model arithmetic
                                 // 765 tokens is the cost of a 1024x1024 image in OpenAI high detail mode
-                                inputTokens += 765;
+                                inputTokens += CONFIG.IMAGE_TOKEN_ESTIMATE;
                             }
                         }
                     }
@@ -601,7 +792,7 @@ async function countInputTokens(generate_data) {
                 }
             }
             // Add overhead for message formatting (rough estimate: ~3 tokens per message boundary)
-            inputTokens += generate_data.prompt.length * 3;
+            inputTokens += generate_data.prompt.length * CONFIG.MESSAGE_OVERHEAD_TOKENS;
         }
     }
 
@@ -618,12 +809,12 @@ function handleGenerateAfterData(generate_data, dryRun) {
     if (dryRun) return;
 
     // Capture model ID synchronously (fast)
-    pendingModelId = getGeneratingModel();
+    pendingState.modelId = getGeneratingModel();
 
     // Start token counting but DON'T await - let it run in parallel with the API request
-    pendingInputTokensPromise = countInputTokens(generate_data)
+    pendingState.inputTokensPromise = countInputTokens(generate_data)
         .then(count => {
-            console.log(`[Token Usage Tracker] Input tokens (full context): ${count}, model: ${pendingModelId}`);
+            console.log(`[Token Usage Tracker] Input tokens (full context): ${count}, model: ${pendingState.modelId}`);
             return count;
         })
         .catch(error => {
@@ -640,23 +831,19 @@ function handleGenerateAfterData(generate_data, dryRun) {
  * @param {object} params - Generation parameters
  * @param {boolean} isDryRun - Whether this is a dry run
  */
-let isQuietGeneration = false;
-let isImpersonateGeneration = false;
-let isPreContinueReady = false;
-
 async function handleGenerationStarted(type, params, isDryRun) {
     if (isDryRun) return;
 
     // Track the generation type for special handling
-    isQuietGeneration = (type === 'quiet');
-    isImpersonateGeneration = (type === 'impersonate');
+    pendingState.isQuietGeneration = (type === CONFIG.GENERATION_TYPES.QUIET);
+    pendingState.isImpersonateGeneration = (type === CONFIG.GENERATION_TYPES.IMPERSONATE);
 
     // Reset pre-continue state
-    preContinueTokenCount = 0;
-    isPreContinueReady = false;
+    pendingState.preContinueCount = 0;
+    pendingState.isPreContinueReady = false;
 
     // For continue type, capture the current message's token count
-    if (type === 'continue') {
+    if (type === CONFIG.GENERATION_TYPES.CONTINUE) {
         try {
             const context = getContext();
             const lastMessage = context.chat[context.chat.length - 1];
@@ -664,28 +851,28 @@ async function handleGenerationStarted(type, params, isDryRun) {
             if (lastMessage) {
                 // Use existing token count if available (synchronous - preferred)
                 if (lastMessage.extra?.token_count && typeof lastMessage.extra.token_count === 'number') {
-                    preContinueTokenCount = lastMessage.extra.token_count;
-                    isPreContinueReady = true;
-                    console.log(`[Token Usage Tracker] Pre-continue tokens (cached): ${preContinueTokenCount}`);
+                    pendingState.preContinueCount = lastMessage.extra.token_count;
+                    pendingState.isPreContinueReady = true;
+                    console.log(`[Token Usage Tracker] Pre-continue tokens (cached): ${pendingState.preContinueCount}`);
                 } else {
                     // Calculate it ourselves (async)
                     let tokens = await countTokens(lastMessage.mes || '');
                     if (lastMessage.extra?.reasoning) {
                         tokens += await countTokens(lastMessage.extra.reasoning);
                     }
-                    preContinueTokenCount = tokens;
-                    isPreContinueReady = true;
-                    console.log(`[Token Usage Tracker] Pre-continue tokens (counted): ${preContinueTokenCount}`);
+                    pendingState.preContinueCount = tokens;
+                    pendingState.isPreContinueReady = true;
+                    console.log(`[Token Usage Tracker] Pre-continue tokens (counted): ${pendingState.preContinueCount}`);
                 }
             }
         } catch (error) {
             console.error('[Token Usage Tracker] Error capturing pre-continue state:', error);
-            preContinueTokenCount = 0;
-            isPreContinueReady = true; // Mark as ready even on error to avoid blocking
+            pendingState.preContinueCount = 0;
+            pendingState.isPreContinueReady = true; // Mark as ready even on error to avoid blocking
         }
     } else {
         // Non-continue types don't need pre-continue state
-        isPreContinueReady = true;
+        pendingState.isPreContinueReady = true;
     }
 }
 
@@ -700,33 +887,32 @@ async function handleGenerationStarted(type, params, isDryRun) {
 async function handleMessageReceived(messageIndex, type) {
     // Filter out events that don't correspond to actual API calls
     // These events are emitted for messages created without calling the API
-    const nonApiTypes = ['command', 'first_message'];
-    if (nonApiTypes.includes(type)) {
+    if (CONFIG.NON_API_MESSAGE_TYPES.includes(type)) {
         console.log(`[Token Usage Tracker] Skipping non-API message type: ${type}`);
         return;
     }
 
     // If there's no pending token counting promise, this likely isn't a real API response
     // (e.g., could be a late-firing event after chat load)
-    if (!pendingInputTokensPromise) {
+    if (!pendingState.inputTokensPromise) {
         console.log(`[Token Usage Tracker] Skipping message with no pending token count (type: ${type || 'unknown'})`);
         return;
     }
 
     // For 'continue' type, wait for pre-continue token count to be ready
     // This prevents race condition where MESSAGE_RECEIVED fires before GENERATION_STARTED completes
-    if (type === 'continue' && !isPreContinueReady) {
+    if (type === CONFIG.GENERATION_TYPES.CONTINUE && !pendingState.isPreContinueReady) {
         console.log('[Token Usage Tracker] Waiting for pre-continue tokens...');
-        const maxWait = 5000; // Max wait 5 seconds
-        const waitInterval = 50;
+        const maxWait = CONFIG.PRE_CONTINUE_MAX_WAIT_MS; // Max wait 5 seconds
+        const waitInterval = CONFIG.PRE_CONTINUE_WAIT_INTERVAL_MS;
         let waited = 0;
-        
-        while (!isPreContinueReady && waited < maxWait) {
+
+        while (!pendingState.isPreContinueReady && waited < maxWait) {
             await new Promise(resolve => setTimeout(resolve, waitInterval));
             waited += waitInterval;
         }
-        
-        if (!isPreContinueReady) {
+
+        if (!pendingState.isPreContinueReady) {
             console.warn('[Token Usage Tracker] Timeout waiting for pre-continue tokens, proceeding without delta');
         } else {
             console.log(`[Token Usage Tracker] Pre-continue ready after ${waited}ms`);
@@ -761,22 +947,22 @@ async function handleMessageReceived(messageIndex, type) {
 
         // For 'continue' type, we only want the newly generated tokens, not the full message
         // Subtract the pre-continue token count to get just the delta
-        if (type === 'continue' && preContinueTokenCount > 0) {
+        if (type === CONFIG.GENERATION_TYPES.CONTINUE && pendingState.preContinueCount > 0) {
             const originalOutputTokens = outputTokens;
-            outputTokens = Math.max(0, outputTokens - preContinueTokenCount);
-            console.log(`[Token Usage Tracker] Continue type: ${originalOutputTokens} total - ${preContinueTokenCount} pre-continue = ${outputTokens} new tokens`);
+            outputTokens = Math.max(0, outputTokens - pendingState.preContinueCount);
+            console.log(`[Token Usage Tracker] Continue type: ${originalOutputTokens} total - ${pendingState.preContinueCount} pre-continue = ${outputTokens} new tokens`);
         }
 
         // Reset pre-continue state
-        const savedPreContinueCount = preContinueTokenCount;
-        preContinueTokenCount = 0;
-        isPreContinueReady = false;
+        const savedPreContinueCount = pendingState.preContinueCount;
+        pendingState.preContinueCount = 0;
+        pendingState.isPreContinueReady = false;
 
         // Await the input token counting that was started in handleGenerateAfterData
-        const inputTokens = await pendingInputTokensPromise;
-        const modelId = pendingModelId;
-        pendingInputTokensPromise = null;
-        pendingModelId = null;
+        const inputTokens = await pendingState.inputTokensPromise;
+        const modelId = pendingState.modelId;
+        pendingState.inputTokensPromise = null;
+        pendingState.modelId = null;
 
         // Get current chat ID if available
         const chatId = context.chatMetadata?.chat_id || null;
@@ -796,7 +982,7 @@ async function handleMessageReceived(messageIndex, type) {
  */
 async function handleGenerationStopped() {
     // If there's no pending token counting promise, nothing to record
-    if (!pendingInputTokensPromise) return;
+    if (!pendingState.inputTokensPromise) return;
 
     try {
         let outputTokens = 0;
@@ -818,12 +1004,11 @@ async function handleGenerationStopped() {
         }
 
         // Await the input token counting that was started in handleGenerateAfterData
-        const inputTokens = await pendingInputTokensPromise;
-        const modelId = pendingModelId;
-        pendingInputTokensPromise = null;
-        pendingModelId = null;
-        preContinueTokenCount = 0;
-        isPreContinueReady = false; // Reset continue state too
+        const inputTokens = await pendingState.inputTokensPromise;
+        const modelId = pendingState.modelId;
+        pendingState.inputTokensPromise = null;
+        pendingState.modelId = null;
+        pendingState.resetContinueState();
 
         // Get current chat ID if available
         const context = getContext();
@@ -836,9 +1021,8 @@ async function handleGenerationStopped() {
     } catch (error) {
         console.error('[Token Usage Tracker] Error handling stopped generation:', error);
         // Reset pending tokens even on error to prevent double counting
-        pendingInputTokensPromise = null;
-        preContinueTokenCount = 0;
-        isPreContinueReady = false;
+        pendingState.inputTokensPromise = null;
+        pendingState.resetContinueState();
     }
 }
 
@@ -847,14 +1031,9 @@ async function handleGenerationStopped() {
  */
 function handleChatChanged(chatId) {
     // Reset pending tokens when chat changes to prevent cross-chat counting
-    pendingInputTokensPromise = null;
-    pendingModelId = null;
-    preContinueTokenCount = 0;
-    isPreContinueReady = false;
-    isQuietGeneration = false;
-    isImpersonateGeneration = false;
+    pendingState.reset();
     console.log(`[Token Usage Tracker] Chat changed to: ${chatId}`);
-    eventSource.emit('tokenUsageUpdated', getUsageStats());
+    eventSource.emit(CONFIG.EVENTS.USAGE_UPDATED, getUsageStats());
 }
 
 /**
@@ -863,15 +1042,15 @@ function handleChatChanged(chatId) {
  * @param {string} text - The generated impersonation text
  */
 async function handleImpersonateReady(text) {
-    if (!pendingInputTokensPromise) return;
+    if (!pendingState.inputTokensPromise) return;
 
     try {
         // Await the input token counting that was started in handleGenerateAfterData
-        const inputTokens = await pendingInputTokensPromise;
-        const modelId = pendingModelId;
-        pendingInputTokensPromise = null;
-        pendingModelId = null;
-        isPreContinueReady = false;
+        const inputTokens = await pendingState.inputTokensPromise;
+        const modelId = pendingState.modelId;
+        pendingState.inputTokensPromise = null;
+        pendingState.modelId = null;
+        pendingState.resetContinueState();
 
         // Count output tokens from the impersonated text
         let outputTokens = 0;
@@ -887,13 +1066,13 @@ async function handleImpersonateReady(text) {
 
 
         // Reset impersonate state
-        isImpersonateGeneration = false;
+        pendingState.isImpersonateGeneration = false;
     } catch (error) {
         console.error('[Token Usage Tracker] Error handling impersonate ready:', error);
-        pendingInputTokensPromise = null;
-        pendingModelId = null;
-        isPreContinueReady = false;
-        isImpersonateGeneration = false;
+        pendingState.inputTokensPromise = null;
+        pendingState.modelId = null;
+        pendingState.resetContinueState();
+        pendingState.isImpersonateGeneration = false;
     }
 }
 
@@ -1113,17 +1292,12 @@ function calculateAllTimeCost() {
 }
 
 // Chart state
-let currentChartRange = 30;
+let currentChartRange = CONFIG.CHART_RANGES.MEDIUM;
 let chartData = [];
 let tooltip = null;
 
 // Chart colors - adapted for dark theme
-const CHART_COLORS = {
-    bar: 'var(--SmartThemeBorderColor)',
-    text: 'var(--SmartThemeBodyColor)',
-    grid: 'var(--SmartThemeBorderColor)',
-    cursor: 'var(--SmartThemeBodyColor)'
-};
+const CHART_COLORS = CONFIG.CHART_COLORS;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -1182,7 +1356,7 @@ function renderChart() {
         return;
     }
 
-    const margin = { top: 10, right: 10, bottom: 25, left: 45 };
+    const margin = CONFIG.CHART_MARGIN;
     const chartWidth = width - margin.left - margin.right;
     const chartHeight = height - margin.top - margin.bottom;
 
@@ -1250,9 +1424,9 @@ function renderChart() {
     // Bars
     const totalBarWidth = chartWidth / chartData.length;
     let barWidth = totalBarWidth * 0.8;
-    if (barWidth > 40) barWidth = 40;
+    if (barWidth > CONFIG.CHART_BAR_MAX_WIDTH) barWidth = CONFIG.CHART_BAR_MAX_WIDTH;
     const actualGap = totalBarWidth - barWidth;
-    const labelInterval = currentChartRange === 90 ? 7 : currentChartRange === 30 ? 3 : 1;
+    const labelInterval = CONFIG.CHART_LABEL_INTERVAL[currentChartRange] || 3;
 
     chartData.forEach((d, i) => {
         const slotX = margin.left + (i * totalBarWidth);
@@ -1475,12 +1649,12 @@ function updateChartRange(range) {
     chartData = getChartData(range);
     renderChart();
 
-    document.querySelectorAll('.token-usage-range-btn').forEach(btn => {
+    document.querySelectorAll(`.${CONFIG.CLASSES.RANGE_BUTTON}`).forEach(btn => {
         const val = parseInt(btn.getAttribute('data-value'));
         if (val === range) {
-            btn.classList.add('active');
+            btn.classList.add(CONFIG.CLASSES.ACTIVE_BUTTON);
         } else {
-            btn.classList.remove('active');
+            btn.classList.remove(CONFIG.CLASSES.ACTIVE_BUTTON);
         }
     });
 }
@@ -1622,7 +1796,52 @@ function updateUIStats() {
 
 
 /**
+ * Create a model configuration row element with color picker and price inputs
+ * @param {string} model - Model identifier
+ * @returns {jQuery} jQuery-wrapped row element
+ */
+function createModelConfigRow(model) {
+    const color = getModelColor(model);
+    const prices = getModelPrice(model);
+
+    const row = $(`
+        <div class="model-config-row">
+            <input type="color" value="${color}" data-model="${model}"
+                   class="model-color-picker tu-color-picker">
+            <span title="${model}" class="tu-text-base tu-text-body tu-truncate tu-flex-1">${model}</span>
+            <span class="tu-text-xs tu-text-body tu-opacity-50 tu-flex-shrink-0">Price</span>
+            <input type="number" class="price-input-in tu-price-input" data-model="${model}" value="${prices.in || ''}" step="0.01" min="0" placeholder="In" title="Price per 1M input tokens">
+            <input type="number" class="price-input-out tu-price-input" data-model="${model}" value="${prices.out || ''}" step="0.01" min="0" placeholder="Out" title="Price per 1M output tokens">
+        </div>
+    `);
+
+    // Color picker handler
+    row.find('.model-color-picker').on('change', function() {
+        setModelColor(String($(this).data('model')), String($(this).val()));
+        renderChart();
+    });
+
+    // Price input handlers with debounce
+    let debounceTimer;
+    const handlePriceChange = () => {
+        const mId = model;
+        const pIn = row.find('.price-input-in').val();
+        const pOut = row.find('.price-input-out').val();
+        setModelPrice(mId, pIn, pOut);
+        updateUIStats();
+    };
+
+    row.find('input[type="number"]').on('input', function() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(handlePriceChange, CONFIG.DEBOUNCE_DELAY_MS);
+    });
+
+    return row;
+}
+
+/**
  * Render the model colors grid with price inputs
+ * Uses DocumentFragment for optimized DOM operations
  */
 function renderModelColorsGrid() {
     const grid = $('#token-usage-model-colors-grid');
@@ -1637,59 +1856,28 @@ function renderModelColorsGrid() {
     }
 
     // If grid is already populated with the same models, don't wipe it (prevents input focus loss)
-    const existingRows = grid.children('.model-config-row');
+    const existingRows = grid.children(`.${CONFIG.CLASSES.MODEL_CONFIG_ROW}`);
     if (existingRows.length === models.length) {
         // Check if models are the same
         const existingModels = Array.from(existingRows).map(row => $(row).find('.model-color-picker').data('model'));
-        const modelsUnchanged = existingModels.length === models.length && 
+        const modelsUnchanged = existingModels.length === models.length &&
                                existingModels.every((m, i) => m === models[i]);
         if (modelsUnchanged) {
             return;
         }
     }
 
+    // Use DocumentFragment for efficient batch DOM insertion
+    const fragment = document.createDocumentFragment();
     grid.empty();
 
     for (const model of models) {
-        const color = getModelColor(model);
-        const prices = getModelPrice(model);
-
-        const row = $(`
-            <div class="model-config-row" style="display: flex; align-items: center; gap: 4px; min-width: 0;">
-                <input type="color" value="${color}" data-model="${model}"
-                       class="model-color-picker"
-                       style="width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; flex-shrink: 0; border-radius: 4px;">
-                <span title="${model}" style="font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--SmartThemeBodyColor); flex: 1;">${model}</span>
-                <span style="font-size: 8px; color: var(--SmartThemeBodyColor); opacity: 0.5; flex-shrink: 0;">Price</span>
-                <input type="number" class="price-input-in" data-model="${model}" value="${prices.in || ''}" step="0.01" min="0" placeholder="In" title="Price per 1M input tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
-                <input type="number" class="price-input-out" data-model="${model}" value="${prices.out || ''}" step="0.01" min="0" placeholder="Out" title="Price per 1M output tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
-            </div>
-        `);
-
-        // Color picker handler
-        row.find('.model-color-picker').on('change', function() {
-            setModelColor(String($(this).data('model')), String($(this).val()));
-            renderChart();
-        });
-
-        // Price input handlers with debounce
-        let debounceTimer;
-        const handlePriceChange = () => {
-             const mId = model; // closure
-             const pIn = row.find('.price-input-in').val();
-             const pOut = row.find('.price-input-out').val();
-             setModelPrice(mId, pIn, pOut);
-             // Trigger UI update to recalc costs
-             updateUIStats();
-        };
-
-        row.find('input[type="number"]').on('input', function() {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(handlePriceChange, 500);
-        });
-
-        grid.append(row);
+        const row = createModelConfigRow(model);
+        // Append the DOM element from jQuery wrapper
+        fragment.appendChild(row[0]);
     }
+
+    grid[0].appendChild(fragment);
 }
 
 /**
@@ -1708,84 +1896,84 @@ function createSettingsUI() {
                 </div>
                 <div class="inline-drawer-content">
                     <!-- Chart Header: Today stats + Range selector -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div class="tu-flex-between" style="margin-bottom: 8px;">
                         <div>
-                            <div style="display: flex; align-items: baseline; gap: 6px;">
-                                <span style="font-size: 18px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-today-total">${formatTokens(stats.today.total)}</span>
-                                <span id="token-usage-today-cost" style="font-size: 12px; color: var(--SmartThemeBodyColor); opacity: 0.8;">$0.00</span>
-                                <span style="font-size: 11px; color: var(--SmartThemeBodyColor); opacity: 0.5;"> today</span>
+                            <div class="tu-flex-start">
+                                <span class="tu-text-3xl tu-font-semibold tu-text-body" id="token-usage-today-total">${formatTokens(stats.today.total)}</span>
+                                <span id="token-usage-today-cost" class="tu-text-xl tu-text-body tu-opacity-80">$0.00</span>
+                                <span class="tu-text-lg tu-text-body tu-opacity-50"> today</span>
                             </div>
-                            <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.4;">
+                            <div class="tu-text-sm tu-text-body tu-opacity-50">
                                 <span id="token-usage-today-in">${formatTokens(stats.today.input || 0)}</span> in /
                                 <span id="token-usage-today-out">${formatTokens(stats.today.output || 0)}</span> out
                             </div>
                         </div>
-                        <div style="display: inline-flex; background: var(--SmartThemeInputColor); border: 1px solid var(--SmartThemeBorderColor); border-radius: 6px; padding: 2px;">
-                            <button class="token-usage-range-btn menu_button" data-value="7" style="padding: 4px 10px; font-size: 11px; border-radius: 4px;">7D</button>
-                            <button class="token-usage-range-btn menu_button active" data-value="30" style="padding: 4px 10px; font-size: 11px; border-radius: 4px;">30D</button>
-                            <button class="token-usage-range-btn menu_button" data-value="90" style="padding: 4px 10px; font-size: 11px; border-radius: 4px;">90D</button>
+                        <div class="tu-range-buttons">
+                            <button class="token-usage-range-btn menu_button" data-value="7">7D</button>
+                            <button class="token-usage-range-btn menu_button active" data-value="30">30D</button>
+                            <button class="token-usage-range-btn menu_button" data-value="90">90D</button>
                         </div>
                     </div>
 
                     <!-- Chart -->
-                    <div id="token-usage-chart" style="width: 100%; height: 320px; background: var(--SmartThemeInputColor); border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; overflow: hidden; margin-bottom: 12px;"></div>
+                    <div id="token-usage-chart"></div>
 
                     <!-- Stats Grid (Week, Month, All Time) -->
-                    <div class="token-usage-stats-grid" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px;">
-                        <div class="token-usage-stat-card" id="token-usage-week-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
-                            <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">This Week</div>
-                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-total">${formatTokens(stats.thisWeek.total)}</div>
+                    <div class="tu-stats-grid">
+                        <div class="tu-stat-card" id="token-usage-week-card">
+                            <div class="tu-p-4 tu-px-8">
+                                <div class="tu-text-sm tu-text-body tu-opacity-50" style="text-decoration: underline;">This Week</div>
+                                <div class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-week-total">${formatTokens(stats.thisWeek.total)}</div>
                             </div>
-                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
-                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
-                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-cost">$0.00</span>
-                            </div>
-                        </div>
-                        <div class="token-usage-stat-card" id="token-usage-month-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
-                            <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">This Month</div>
-                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-total">${formatTokens(stats.thisMonth.total)}</div>
-                            </div>
-                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
-                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
-                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-cost">$0.00</span>
+                            <div class="tu-border"></div>
+                            <div class="tu-flex-1 tu-flex-center tu-p-4 tu-px-8">
+                                <span class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-week-cost">$0.00</span>
                             </div>
                         </div>
-                        <div class="token-usage-stat-card" id="token-usage-alltime-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex; cursor: pointer; transition: background 0.2s;">
-                            <div style="flex: 1; padding: 4px 8px;">
-                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5; text-decoration: underline;">All Time</div>
-                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-alltime-total">${formatTokens(stats.allTime.total)}</div>
+                        <div class="tu-stat-card" id="token-usage-month-card">
+                            <div class="tu-p-4 tu-px-8">
+                                <div class="tu-text-sm tu-text-body tu-opacity-50" style="text-decoration: underline;">This Month</div>
+                                <div class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-month-total">${formatTokens(stats.thisMonth.total)}</div>
                             </div>
-                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
-                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
-                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-alltime-cost">$0.00</span>
+                            <div class="tu-border"></div>
+                            <div class="tu-flex-1 tu-flex-center tu-p-4 tu-px-8">
+                                <span class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-month-cost">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="tu-stat-card" id="token-usage-alltime-card">
+                            <div class="tu-p-4 tu-px-8">
+                                <div class="tu-text-sm tu-text-body tu-opacity-50" style="text-decoration: underline;">All Time</div>
+                                <div class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-alltime-total">${formatTokens(stats.allTime.total)}</div>
+                            </div>
+                            <div class="tu-border"></div>
+                            <div class="tu-flex-1 tu-flex-center tu-p-4 tu-px-8">
+                                <span class="tu-text-2xl tu-font-semibold tu-text-body" id="token-usage-alltime-cost">$0.00</span>
                             </div>
                         </div>
                     </div>
 
                     <!-- Config (Model Colors & Prices) -->
-                    <div class="inline-drawer" style="margin-top: 10px;">
-                        <div class="inline-drawer-toggle inline-drawer-header" style="padding: 4px 0 4px 8px;">
-                            <span style="font-size: 11px;">Config</span>
+                    <div class="inline-drawer">
+                        <div class="inline-drawer-toggle inline-drawer-header">
+                            <span class="tu-text-lg">Config</span>
                             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                         </div>
                         <div class="inline-drawer-content">
-                            <div id="token-usage-model-colors-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;"></div>
+                            <div id="token-usage-model-colors-grid" class="tu-stats-grid"></div>
                         </div>
                     </div>
 
                     <!-- Controls -->
-                    <div style="display: flex; align-items: center; gap: 8px; padding-left: 8px;">
-                        <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.4;" id="token-usage-tokenizer">Tokenizer: ${stats.tokenizer || 'Unknown'}</div>
-                        <div style="flex: 1;"></div>
-                        <label style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.7; cursor: pointer;">
-                            <input type="checkbox" id="token-usage-currency-toggle" style="width: 12px; height: 12px; cursor: pointer;">
+                    <div class="tu-flex tu-flex-center tu-gap-8" style="padding-left: 8px;">
+                        <div class="tu-text-sm tu-text-body tu-opacity-40" id="token-usage-tokenizer">Tokenizer: ${stats.tokenizer || 'Unknown'}</div>
+                        <div class="tu-flex-1"></div>
+                        <label class="tu-flex tu-flex-center tu-gap-4 tu-text-base tu-text-body tu-opacity-70 tu-cursor-pointer">
+                            <input type="checkbox" id="token-usage-currency-toggle" class="tu-cursor-pointer">
                             Select currency
                         </label>
-                        <div style="flex: 1;"></div>
-                        <div id="token-usage-reset-all" class="menu_button" title="Reset all stats" style="color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 11px; white-space: nowrap;">
-                            <i class="fa-solid fa-trash"></i>&nbsp;Reset All
+                        <div class="tu-flex-1"></div>
+                        <div id="token-usage-reset-all" class="menu_button" title="Reset all stats">
+                            <i class="fa-solid fa-trash"></i>&nbsp;<span class="tu-text-lg">Reset All</span>
                         </div>
                     </div>
                 </div>
@@ -1809,7 +1997,7 @@ function createSettingsUI() {
     if (!document.getElementById('token-usage-tooltip')) {
         const tooltipEl = document.createElement('div');
         tooltipEl.id = 'token-usage-tooltip';
-        tooltipEl.style.cssText = 'position: fixed; display: none; background: rgba(0,0,0,0.9); color: white; padding: 8px 12px; border-radius: 6px; font-size: 11px; pointer-events: none; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
+        tooltipEl.className = 'tu-tooltip';
         document.body.appendChild(tooltipEl);
         console.log('[Token Usage Tracker] Tooltip appended to body');
     }
@@ -2054,6 +2242,122 @@ function refreshDetailPopups() {
 }
 
 /**
+ * Helper function to create popup content for period statistics
+ * @param {string} popupId - ID for the popup element
+ * @param {string} title - Popup title (e.g., "This Week Details")
+ * @param {Object} modelData - Aggregated model data { modelId: { input, output, cost } }
+ * @param {number} totalInput - Total input tokens
+ * @param {number} totalOutput - Total output tokens
+ * @param {number} totalCost - Total cost in USD
+ * @param {string} emptyMessage - Message to show when no data
+ * @param {string} position - Popup position: 'right' or 'left'
+ */
+function createPeriodPopup(popupId, title, modelData, totalInput, totalOutput, totalCost, emptyMessage, position = 'right') {
+    const settings = getSettings();
+    const selectedCurrency = settings.currency || 'USD';
+
+    // Build model rows
+    let modelRows = '';
+    for (const [modelId, data] of Object.entries(modelData)) {
+        const prices = settings.modelPrices[modelId];
+        const hasPrice = prices !== undefined;
+        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
+        const modelTitle = modelId.length > 25 ? modelId.substring(0, 22) + '...' : modelId;
+
+        if (!hasPrice) {
+            modelRows += `
+                <div class="tu-popup-model-row">
+                    <div class="tu-text-body tu-truncate" title="${modelId}">${modelTitle}</div>
+                    <div class="tu-text-body tu-text-center tu-opacity-80">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div class="tu-text-warning tu-text-right">Set model prices</div>
+                </div>
+            `;
+        } else {
+            modelRows += `
+                <div class="tu-popup-model-row">
+                    <div class="tu-text-body tu-truncate" title="${modelId}">${modelTitle}</div>
+                    <div class="tu-text-body tu-text-center tu-opacity-80">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
+                    <div class="tu-text-success tu-text-right">${formatCurrency(convertedCost, selectedCurrency)}</div>
+                </div>
+            `;
+        }
+    }
+
+    if (modelRows === '') {
+        modelRows = `<div class="tu-popup-empty">${emptyMessage}</div>`;
+    }
+
+    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
+    const rightPosition = position === 'left' ? '420px' : '20px';
+
+    return `
+        <div class="tu-popup" id="${popupId}" style="right: ${rightPosition};">
+            <div class="tu-popup-header" id="${popupId}-header">
+                <h3>📊 ${title}</h3>
+                <button class="tu-popup-close-btn" onclick="document.getElementById('${popupId}').remove()">×</button>
+            </div>
+            <div class="tu-popup-content">
+                <div class="tu-popup-header-grid">
+                    <div class="tu-text-body">Model</div>
+                    <div class="tu-text-body tu-text-center">Tokens</div>
+                    <div class="tu-text-body tu-text-right">Cost</div>
+                </div>
+
+                ${modelRows}
+
+                <div class="tu-popup-total-row">
+                    <div class="tu-text-body">Total</div>
+                    <div class="tu-text-body tu-text-center">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
+                    <div class="tu-text-success">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Make a popup element draggable
+ * @param {string} popupId - ID of the popup element
+ */
+function makePopupDraggable(popupId) {
+    const popup = document.getElementById(popupId);
+    if (!popup) return;
+
+    const header = document.getElementById(`${popupId}-header`);
+    if (!header) return;
+
+    // Prevent clicks on popup from closing parent drawers
+    popup.addEventListener('click', (e) => e.stopPropagation());
+    popup.addEventListener('mousedown', (e) => e.stopPropagation());
+
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+
+    header.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = popup.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        popup.style.left = `${initialLeft + dx}px`;
+        popup.style.top = `${initialTop + dy}px`;
+        popup.style.right = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+}
+
+/**
  * Show detailed statistics for current week in a popup
  */
 function showWeekDetails() {
@@ -2061,17 +2365,17 @@ function showWeekDetails() {
     const now = new Date();
     const currentWeekKey = getWeekKey(now);
     const selectedCurrency = settings.currency || 'USD';
-    
+
     // Get all days in current week
     const weekData = {};
     let totalInput = 0;
     let totalOutput = 0;
     let totalCost = 0;
-    
+
     for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
         const [year, month, day] = dayKey.split('-').map(Number);
         const date = new Date(year, month - 1, day);
-        
+
         if (getWeekKey(date) === currentWeekKey) {
             // Aggregate by model
             if (data.models) {
@@ -2082,11 +2386,11 @@ function showWeekDetails() {
                     const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
                     const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
                     const modelCost = calculateCost(mInput, mOutput, modelId);
-                    
+
                     weekData[modelId].input += mInput;
                     weekData[modelId].output += mOutput;
                     weekData[modelId].cost += modelCost;
-                    
+
                     totalInput += mInput;
                     totalOutput += mOutput;
                     totalCost += modelCost;
@@ -2094,107 +2398,24 @@ function showWeekDetails() {
             }
         }
     }
-    
-    // Build popup content
-    let modelRows = '';
-    for (const [modelId, data] of Object.entries(weekData)) {
-        const prices = settings.modelPrices[modelId];
-        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
-        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        
-        if (!hasPrice) {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
-                </div>
-            `;
-        } else {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-                </div>
-            `;
-        }
-    }
-    
-    if (modelRows === '') {
-        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data for this week</div>';
-    }
-    
-    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
-    
-    // Create popup HTML - smaller floating window with drag
-    const popupHtml = `
-        <div style="position: absolute; top: 100px; right: 20px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="week-details-popup">
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="week-details-popup-header">
-                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 This Week Details</h3>
-                <button onclick="document.getElementById('week-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
-            </div>
-            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
-                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
-                </div>
-                
-                ${modelRows}
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
-                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
-                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
-                </div>
-            </div>
-        </div>
-    `;
-    
+
     // Remove existing popup if any
     const existing = document.getElementById('week-details-popup');
     if (existing) existing.remove();
-    
+
+    const popupHtml = createPeriodPopup(
+        'week-details-popup',
+        'This Week Details',
+        weekData,
+        totalInput,
+        totalOutput,
+        totalCost,
+        'No data for this week',
+        'right'
+    );
+
     document.body.insertAdjacentHTML('beforeend', popupHtml);
-    
-    // Make popup draggable
-    const popup = document.getElementById('week-details-popup');
-    const header = document.getElementById('week-details-popup-header');
-    
-    // Prevent clicks on popup from closing parent drawers
-    popup.addEventListener('click', (e) => {
-        e.stopPropagation();
-    });
-    popup.addEventListener('mousedown', (e) => {
-        e.stopPropagation();
-    });
-    
-    let isDragging = false;
-    let startX, startY, initialLeft, initialTop;
-    
-    header.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        const rect = popup.getBoundingClientRect();
-        initialLeft = rect.left;
-        initialTop = rect.top;
-        e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        popup.style.left = `${initialLeft + dx}px`;
-        popup.style.top = `${initialTop + dy}px`;
-        popup.style.right = 'auto';
-    });
-    
-    document.addEventListener('mouseup', () => {
-        isDragging = false;
-    });
+    makePopupDraggable('week-details-popup');
 }
 
 /**
@@ -2204,18 +2425,17 @@ function showMonthDetails() {
     const settings = getSettings();
     const now = new Date();
     const currentMonthKey = getMonthKey(now);
-    const selectedCurrency = settings.currency || 'USD';
-    
+
     // Get all days in current month
     const monthData = {};
     let totalInput = 0;
     let totalOutput = 0;
     let totalCost = 0;
-    
+
     for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
         const [year, month, day] = dayKey.split('-').map(Number);
         const date = new Date(year, month - 1, day);
-        
+
         if (getMonthKey(date) === currentMonthKey) {
             if (data.models) {
                 for (const [modelId, modelData] of Object.entries(data.models)) {
@@ -2225,11 +2445,11 @@ function showMonthDetails() {
                     const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
                     const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
                     const modelCost = calculateCost(mInput, mOutput, modelId);
-                    
+
                     monthData[modelId].input += mInput;
                     monthData[modelId].output += mOutput;
                     monthData[modelId].cost += modelCost;
-                    
+
                     totalInput += mInput;
                     totalOutput += mOutput;
                     totalCost += modelCost;
@@ -2237,98 +2457,24 @@ function showMonthDetails() {
             }
         }
     }
-    
-    let modelRows = '';
-    for (const [modelId, data] of Object.entries(monthData)) {
-        const prices = settings.modelPrices[modelId];
-        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
-        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        
-        if (!hasPrice) {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
-                </div>
-            `;
-        } else {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-                </div>
-            `;
-        }
-    }
-    
-    if (modelRows === '') {
-        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data for this month</div>';
-    }
-    
-    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
-    
-    const popupHtml = `
-        <div style="position: absolute; top: 100px; right: 420px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="month-details-popup">
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="month-details-popup-header">
-                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 This Month Details</h3>
-                <button onclick="document.getElementById('month-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
-            </div>
-            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
-                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
-                </div>
-                
-                ${modelRows}
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
-                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
-                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
-                </div>
-            </div>
-        </div>
-    `;
-    
+
+    // Remove existing popup if any
     const existing = document.getElementById('month-details-popup');
     if (existing) existing.remove();
-    
+
+    const popupHtml = createPeriodPopup(
+        'month-details-popup',
+        'This Month Details',
+        monthData,
+        totalInput,
+        totalOutput,
+        totalCost,
+        'No data for this month',
+        'left'
+    );
+
     document.body.insertAdjacentHTML('beforeend', popupHtml);
-    
-    const popup = document.getElementById('month-details-popup');
-    const header = document.getElementById('month-details-popup-header');
-    
-    popup.addEventListener('click', (e) => e.stopPropagation());
-    popup.addEventListener('mousedown', (e) => e.stopPropagation());
-    
-    let isDragging = false;
-    let startX, startY, initialLeft, initialTop;
-    
-    header.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        const rect = popup.getBoundingClientRect();
-        initialLeft = rect.left;
-        initialTop = rect.top;
-        e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        popup.style.left = `${initialLeft + dx}px`;
-        popup.style.top = `${initialTop + dy}px`;
-        popup.style.right = 'auto';
-    });
-    
-    document.addEventListener('mouseup', () => {
-        isDragging = false;
-    });
+    makePopupDraggable('month-details-popup');
 }
 
 /**
@@ -2336,14 +2482,13 @@ function showMonthDetails() {
  */
 function showAllTimeDetails() {
     const settings = getSettings();
-    const selectedCurrency = settings.currency || 'USD';
-    
+
     // Aggregate all data by model
     const allTimeData = {};
     let totalInput = 0;
     let totalOutput = 0;
     let totalCost = 0;
-    
+
     for (const [modelId, data] of Object.entries(settings.usage.byModel)) {
         allTimeData[modelId] = {
             input: data.input || 0,
@@ -2354,98 +2499,24 @@ function showAllTimeDetails() {
         totalOutput += data.output || 0;
         totalCost += allTimeData[modelId].cost;
     }
-    
-    let modelRows = '';
-    for (const [modelId, data] of Object.entries(allTimeData)) {
-        const prices = settings.modelPrices[modelId];
-        const hasPrice = prices !== undefined;  // Price is set if model exists in modelPrices
-        const convertedCost = convertUSDtoCurrency(data.cost, selectedCurrency);
-        
-        if (!hasPrice) {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #fbbf24; text-align: right;">Set model prices</div>
-                </div>
-            `;
-        } else {
-            modelRows += `
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--SmartThemeBorderColor); font-size: 11px;">
-                    <div style="color: var(--SmartThemeBodyColor); overflow: hidden; text-overflow: ellipsis;" title="${modelId}">${modelId}</div>
-                    <div style="color: var(--SmartThemeBodyColor); opacity: 0.8; text-align: center;">${formatTokens(data.input)} in / ${formatTokens(data.output)} out</div>
-                    <div style="color: #4ade80; text-align: right;">${formatCurrency(convertedCost, selectedCurrency)}</div>
-                </div>
-            `;
-        }
-    }
-    
-    if (modelRows === '') {
-        modelRows = '<div style="padding: 20px; text-align: center; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data yet</div>';
-    }
-    
-    const totalConvertedCost = convertUSDtoCurrency(totalCost, selectedCurrency);
-    
-    const popupHtml = `
-        <div style="position: absolute; top: 100px; right: 20px; background: #1a1a1a !important; background-color: #1a1a1a !important; border: 2px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 0; width: 400px; max-height: 70vh; overflow-y: auto; z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.8);" id="alltime-details-popup">
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #2a2a2a !important; background-color: #2a2a2a !important; border-radius: 6px 6px 0 0; cursor: move;" id="alltime-details-popup-header">
-                <h3 style="margin: 0; color: var(--SmartThemeBodyColor); font-size: 14px;">📊 All Time Details</h3>
-                <button onclick="document.getElementById('alltime-details-popup').remove()" style="background: transparent; border: none; color: var(--SmartThemeBodyColor); cursor: pointer; font-size: 16px; padding: 0 4px;">×</button>
-            </div>
-            <div style="padding: 12px; background: #1a1a1a !important; background-color: #1a1a1a !important;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 6px; background: var(--SmartThemeInputColor); border-radius: 4px; font-size: 9px; font-weight: 600; margin-bottom: 8px;">
-                    <div style="color: var(--SmartThemeBodyColor);">Model</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center;">Tokens</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: right;">Cost</div>
-                </div>
-                
-                ${modelRows}
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 6px 4px; border-top: 2px solid var(--SmartThemeBorderColor); margin-top: 8px; font-weight: 600;">
-                    <div style="color: var(--SmartThemeBodyColor); font-size: 11px;">Total</div>
-                    <div style="color: var(--SmartThemeBodyColor); text-align: center; font-size: 11px;">${formatTokens(totalInput)} in / ${formatTokens(totalOutput)} out</div>
-                    <div style="color: #4ade80; text-align: right; font-size: 11px;">${formatCurrency(totalConvertedCost, selectedCurrency)}</div>
-                </div>
-            </div>
-        </div>
-    `;
-    
+
+    // Remove existing popup if any
     const existing = document.getElementById('alltime-details-popup');
     if (existing) existing.remove();
-    
+
+    const popupHtml = createPeriodPopup(
+        'alltime-details-popup',
+        'All Time Details',
+        allTimeData,
+        totalInput,
+        totalOutput,
+        totalCost,
+        'No data yet',
+        'right'
+    );
+
     document.body.insertAdjacentHTML('beforeend', popupHtml);
-    
-    const popup = document.getElementById('alltime-details-popup');
-    const header = document.getElementById('alltime-details-popup-header');
-    
-    popup.addEventListener('click', (e) => e.stopPropagation());
-    popup.addEventListener('mousedown', (e) => e.stopPropagation());
-    
-    let isDragging = false;
-    let startX, startY, initialLeft, initialTop;
-    
-    header.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        const rect = popup.getBoundingClientRect();
-        initialLeft = rect.left;
-        initialTop = rect.top;
-        e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        popup.style.left = `${initialLeft + dx}px`;
-        popup.style.top = `${initialTop + dy}px`;
-        popup.style.right = 'auto';
-    });
-    
-    document.addEventListener('mouseup', () => {
-        isDragging = false;
-    });
+    makePopupDraggable('alltime-details-popup');
 }
 
 /**
@@ -2618,7 +2689,7 @@ async function showCurrencySelector() {
      */
     function updateRateDisplay() {
         const selectedCurrency = select.value;
-        const rate = currencyRatesCache ? (currencyRatesCache[selectedCurrency.toLowerCase()] || 1) : 1;
+        const rate = currencyService.getRate(selectedCurrency);
 
         let rateEl = selectorContainer.querySelector('.currency-rate-display');
         if (!rateEl) {
@@ -2654,8 +2725,6 @@ async function showCurrencySelector() {
  * - generateQuiet / generate_quiet (Used by Summarize, generated prompts, etc.)
  * - ConnectionManagerRequestService.sendRequest (Used by extensions like Roadway)
  */
-let isTrackingBackground = false;
-
 function patchBackgroundGenerations() {
     patchGenerateQuietPrompt();
     patchConnectionManager();
@@ -2666,13 +2735,13 @@ function patchGenerateQuietPrompt() {
     // MESSAGE_RECEIVED doesn't fire. Flush pending tokens on next generation or chat change.
     eventSource.on(event_types.GENERATION_STARTED, async (type, params, dryRun) => {
         if (dryRun) return;
-        if (isQuietGeneration && pendingInputTokensPromise) {
+        if (pendingState.isQuietGeneration && pendingState.inputTokensPromise) {
             await flushQuietGeneration();
         }
     });
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
-        if (isQuietGeneration && pendingInputTokensPromise) {
+        if (pendingState.isQuietGeneration && pendingState.inputTokensPromise) {
             await flushQuietGeneration();
         }
     });
@@ -2682,11 +2751,11 @@ function patchGenerateQuietPrompt() {
  * Flush a pending quiet generation, recording tokens from what we have
  */
 async function flushQuietGeneration() {
-    if (!pendingInputTokensPromise) return;
+    if (!pendingState.inputTokensPromise) return;
 
     try {
-        const inputTokens = await pendingInputTokensPromise;
-        const modelId = pendingModelId;
+        const inputTokens = await pendingState.inputTokensPromise;
+        const modelId = pendingState.modelId;
 
         // Try to get output from streaming processor
         let outputTokens = 0;
@@ -2702,30 +2771,39 @@ async function flushQuietGeneration() {
         console.error('[Token Usage Tracker] Error flushing quiet generation:', e);
     } finally {
         // Reset state
-        pendingInputTokensPromise = null;
-        pendingModelId = null;
-        isPreContinueReady = false;
-        isQuietGeneration = false;
+        pendingState.reset();
     }
 }
 
+/**
+ * Interval ID for ConnectionManager patch polling
+ * Stored for cleanup on extension unload
+ */
+let connectionManagerPatchInterval = null;
+
 function patchConnectionManager() {
+    // Clear any existing interval first
+    if (connectionManagerPatchInterval) {
+        clearInterval(connectionManagerPatchInterval);
+    }
+
     // Poll for ConnectionManagerRequestService (used by Roadway and similar extensions)
-    const checkInterval = setInterval(() => {
+    connectionManagerPatchInterval = setInterval(() => {
         try {
             const context = getContext();
             const ServiceClass = context?.ConnectionManagerRequestService;
 
             if (!ServiceClass || typeof ServiceClass.sendRequest !== 'function') return;
             if (ServiceClass.sendRequest._isPatched) {
-                clearInterval(checkInterval);
+                clearInterval(connectionManagerPatchInterval);
+                connectionManagerPatchInterval = null;
                 return;
             }
 
             const originalSendRequest = ServiceClass.sendRequest.bind(ServiceClass);
 
             ServiceClass.sendRequest = async function(profileId, messages, maxTokens, custom, overridePayload) {
-                if (isTrackingBackground) {
+                if (pendingState.isTrackingBackground) {
                     return await originalSendRequest(profileId, messages, maxTokens, custom, overridePayload);
                 }
 
@@ -2733,12 +2811,12 @@ function patchConnectionManager() {
                 const modelId = getGeneratingModel();
 
                 try {
-                    isTrackingBackground = true;
+                    pendingState.isTrackingBackground = true;
 
                     try {
                         inputTokens = await countInputTokens({ prompt: messages });
                     } catch (e) {
-                        console.error('[Token Usage Tracker] Error counting sendRequest input:', e);
+                        ErrorHandler.silent('counting sendRequest input', e);
                     }
 
                     const result = await originalSendRequest(profileId, messages, maxTokens, custom, overridePayload);
@@ -2755,24 +2833,31 @@ function patchConnectionManager() {
                             recordUsage(inputTokens, outputTokens, null, modelId);
                         }
                     } catch (e) {
-                        console.error('[Token Usage Tracker] Error counting sendRequest output:', e);
+                        ErrorHandler.silent('counting sendRequest output', e);
                     }
 
                     return result;
                 } finally {
-                    isTrackingBackground = false;
+                    pendingState.isTrackingBackground = false;
                 }
             };
 
             ServiceClass.sendRequest._isPatched = true;
-            clearInterval(checkInterval);
+            clearInterval(connectionManagerPatchInterval);
+            connectionManagerPatchInterval = null;
         } catch (e) {
-            console.error('[Token Usage Tracker] Error in patchConnectionManager:', e);
+            ErrorHandler.handle('patching ConnectionManager', e);
         }
     }, 1000);
 
-    // Stop polling after 30 seconds
-    setTimeout(() => clearInterval(checkInterval), 30000);
+    // Stop polling after 30 seconds to prevent infinite resource usage
+    setTimeout(() => {
+        if (connectionManagerPatchInterval) {
+            clearInterval(connectionManagerPatchInterval);
+            connectionManagerPatchInterval = null;
+            console.log('[Token Usage Tracker] Stopped ConnectionManager patching after timeout');
+        }
+    }, CONFIG.CONNECTION_MANAGER_PATCH_TIMEOUT_MS);
 }
 
 /**
@@ -2780,7 +2865,7 @@ function patchConnectionManager() {
  */
 async function handleBackgroundGeneration(originalFn, context, args, inputCounter, outputCounter) {
     // Avoid double counting if one patched function calls another
-    if (isTrackingBackground) {
+    if (pendingState.isTrackingBackground) {
         return await originalFn.apply(context, args);
     }
 
@@ -2789,7 +2874,7 @@ async function handleBackgroundGeneration(originalFn, context, args, inputCounte
     const modelId = getGeneratingModel();
 
     try {
-        isTrackingBackground = true;
+        pendingState.isTrackingBackground = true;
 
         // Count input tokens
         try {
@@ -2813,7 +2898,7 @@ async function handleBackgroundGeneration(originalFn, context, args, inputCounte
             console.error('[Token Usage Tracker] Error counting background output:', e);
         }
     } finally {
-        isTrackingBackground = false;
+        pendingState.isTrackingBackground = false;
     }
 
     return result;
