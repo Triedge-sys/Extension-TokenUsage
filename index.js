@@ -1626,6 +1626,62 @@ function updateChartRange(range) {
 /**
  * Update the stats display in the UI
  */
+/**
+ * Check if all models in a list have prices set
+ * @param {string[]} modelIds - Array of model IDs
+ * @returns {boolean} True if all models have prices
+ */
+function modelsHavePrices(modelIds) {
+    const settings = getSettings();
+    return modelIds.length > 0 && modelIds.every(modelId => settings.modelPrices[modelId] !== undefined);
+}
+
+/**
+ * Update cost display for a period
+ * @param {string} elementId - jQuery selector for the element
+ * @param {number} cost - Cost in USD
+ * @param {string[]} modelIds - Array of model IDs used in this period
+ */
+function updatePeriodCost(elementId, cost, modelIds) {
+    const settings = getSettings();
+    const selectedCurrency = settings.currency || 'USD';
+    
+    if (!modelsHavePrices(modelIds)) {
+        $(elementId).text('Set model prices');
+    } else {
+        $(elementId).text(currencyService.convertAndFormat(cost, selectedCurrency));
+    }
+}
+
+/**
+ * Calculate period cost from byDay data
+ * @param {string} periodKey - The period key to filter by
+ * @param {Function} getPeriodFn - Function to get period key from date
+ * @returns {{ cost: number, models: string[] }} Period cost and model IDs
+ */
+function calculatePeriodCost(periodKey, getPeriodFn) {
+    const settings = getSettings();
+    let totalCost = 0;
+    const modelSet = new Set();
+
+    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+        const [year, month, day] = dayKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+
+        if (getPeriodFn(date) === periodKey && data.models) {
+            // Calculate cost for this day
+            for (const [modelId, modelData] of Object.entries(data.models)) {
+                const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                totalCost += calculateCost(mInput, mOutput, modelId);
+                modelSet.add(modelId);
+            }
+        }
+    }
+
+    return { cost: totalCost, models: Array.from(modelSet) };
+}
+
 function updateUIStats() {
     const stats = getUsageStats();
     const now = new Date();
@@ -1642,111 +1698,24 @@ function updateUIStats() {
     $('#token-usage-month-total').text(formatTokens(stats.thisMonth.total));
     $('#token-usage-alltime-total').text(formatTokens(stats.allTime.total));
 
-    // Check if any model used has prices set (for All Time)
-    const allTimeModels = Object.keys(settings.usage.byModel || {});
-    const allModelsHavePrice = allTimeModels.length > 0 && allTimeModels.every(modelId => {
-        return settings.modelPrices[modelId] !== undefined;
-    });
-
-    // Cost calculations
+    // All Time cost
     const allTimeCost = calculateAllTimeCost();
-    const convertedAllTimeCost = currencyService.convertToCurrency(allTimeCost, selectedCurrency);
+    const allTimeModels = Object.keys(settings.usage.byModel || {});
+    updatePeriodCost('#token-usage-alltime-cost', allTimeCost, allTimeModels);
 
-    if (!allModelsHavePrice) {
-        $('#token-usage-alltime-cost').text('Set model prices');
-    } else if (convertedAllTimeCost > 0) {
-        $('#token-usage-alltime-cost').text(currencyService.format(convertedAllTimeCost, selectedCurrency));
-    } else {
-        $('#token-usage-alltime-cost').text(currencyService.format(0, selectedCurrency));
-    }
-
-    // For Week/Month/Today: Calculate from byDay data
-    const currentWeekKey = getWeekKey(now);
-    const currentMonthKey = getMonthKey(now);
+    // Calculate period costs
     const todayKey = getDayKey(now);
+    const weekKey = getWeekKey(now);
+    const monthKey = getMonthKey(now);
 
-    let weekCost = 0;
-    let monthCost = 0;
-    let todayCost = 0;
-    let weekModels = [];
-    let monthModels = [];
-    let todayModels = [];
+    const { cost: weekCost, models: weekModels } = calculatePeriodCost(weekKey, getWeekKey);
+    const { cost: monthCost, models: monthModels } = calculatePeriodCost(monthKey, getMonthKey);
+    const { cost: todayCost, models: todayModels } = calculatePeriodCost(todayKey, getDayKey);
 
-    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
-        // Parse dayKey (YYYY-MM-DD) as local date, not UTC
-        const [year, month, day] = dayKey.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-
-        // Collect models for each period
-        if (data.models) {
-            const modelIds = Object.keys(data.models);
-            if (getWeekKey(date) === currentWeekKey) {
-                weekModels = weekModels.concat(modelIds);
-            }
-            if (getMonthKey(date) === currentMonthKey) {
-                monthModels = monthModels.concat(modelIds);
-            }
-            if (dayKey === todayKey) {
-                todayModels = todayModels.concat(modelIds);
-            }
-        }
-
-        // Calculate cost for this day using per-model input/output breakdown
-        let dayCost = 0;
-        if (data.models) {
-            for (const [mid, modelData] of Object.entries(data.models)) {
-                const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
-                const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
-                dayCost += calculateCost(mInput, mOutput, mid);
-            }
-        }
-
-        // Week check
-        if (getWeekKey(date) === currentWeekKey) {
-            weekCost += dayCost;
-            if (dayKey === todayKey) {
-                todayCost += dayCost;
-            }
-        }
-        // Month check
-        if (getMonthKey(date) === currentMonthKey) {
-            monthCost += dayCost;
-        }
-    }
-
-    // Remove duplicates
-    weekModels = [...new Set(weekModels)];
-    monthModels = [...new Set(monthModels)];
-    todayModels = [...new Set(todayModels)];
-
-    // Check if models in each period have prices set
-    const weekModelsHavePrice = weekModels.length > 0 && weekModels.every(modelId => {
-        return settings.modelPrices[modelId] !== undefined;
-    });
-    const monthModelsHavePrice = monthModels.length > 0 && monthModels.every(modelId => {
-        return settings.modelPrices[modelId] !== undefined;
-    });
-    const todayModelsHavePrice = todayModels.length > 0 && todayModels.every(modelId => {
-        return settings.modelPrices[modelId] !== undefined;
-    });
-
-    if (!weekModelsHavePrice) {
-        $('#token-usage-week-cost').text('Set model prices');
-    } else {
-        $('#token-usage-week-cost').text(currencyService.convertAndFormat(weekCost, selectedCurrency));
-    }
-
-    if (!monthModelsHavePrice) {
-        $('#token-usage-month-cost').text('Set model prices');
-    } else {
-        $('#token-usage-month-cost').text(currencyService.convertAndFormat(monthCost, selectedCurrency));
-    }
-
-    if (!todayModelsHavePrice) {
-        $('#token-usage-today-cost').text('Set model prices');
-    } else {
-        $('#token-usage-today-cost').text(currencyService.convertAndFormat(todayCost, selectedCurrency));
-    }
+    // Update cost displays
+    updatePeriodCost('#token-usage-week-cost', weekCost, weekModels);
+    updatePeriodCost('#token-usage-month-cost', monthCost, monthModels);
+    updatePeriodCost('#token-usage-today-cost', todayCost, todayModels);
 
     $('#token-usage-tokenizer').text('Tokenizer: ' + (stats.tokenizer || 'Unknown'));
 
