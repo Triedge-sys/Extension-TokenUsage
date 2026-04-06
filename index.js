@@ -170,31 +170,66 @@ function loadSettings() {
     // Initialize currency
     if (!settings.currency) settings.currency = 'USD';
 
-    // Migration: Convert byDay.models from numeric format to object format
+    // Initialize migration version tracker
+    if (!settings.migrationVersion) settings.migrationVersion = 0;
+
+    // Migration v1: Convert byDay.models from numeric format to object format
     // Old: models[modelId] = totalTokens (number)
     // New: models[modelId] = { input, output, total }
     let migrationNeeded = false;
-    for (const dayData of Object.values(settings.usage.byDay)) {
-        if (dayData.models) {
-            for (const [modelId, value] of Object.entries(dayData.models)) {
-                if (typeof value === 'number') {
-                    migrationNeeded = true;
-                    // Migrate: estimate input/output using day's ratio
-                    const ratio = dayData.total ? value / dayData.total : 0;
-                    dayData.models[modelId] = {
-                        input: Math.round((dayData.input || 0) * ratio),
-                        output: Math.round((dayData.output || 0) * ratio),
-                        total: value
-                    };
+    if (settings.migrationVersion < 1) {
+        for (const dayData of Object.values(settings.usage.byDay)) {
+            if (dayData.models) {
+                for (const [modelId, value] of Object.entries(dayData.models)) {
+                    if (typeof value === 'number') {
+                        migrationNeeded = true;
+                        // Migrate: estimate input/output using day's ratio
+                        const ratio = dayData.total ? value / dayData.total : 0;
+                        dayData.models[modelId] = {
+                            input: Math.round((dayData.input || 0) * ratio),
+                            output: Math.round((dayData.output || 0) * ratio),
+                            total: value
+                        };
+                    }
                 }
             }
         }
+        if (migrationNeeded) {
+            settings.migrationVersion = 1;
+        }
+    }
+
+    // Migration v2: Recalculate byWeek data using the fixed getWeekKey function
+    // The old function calculated week numbers incorrectly, so we need to rebuild from byDay
+    // This runs only once when upgrading to the fixed version
+    if (settings.migrationVersion < 2) {
+        console.log('[Token Usage Tracker] Migrating byWeek data to v2 (fixed getWeekKey)');
+        settings.usage.byWeek = {};
+
+        // Rebuild byWeek from byDay using the corrected getWeekKey
+        for (const [dayKey, dayData] of Object.entries(settings.usage.byDay)) {
+            const [year, month, day] = dayKey.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            const weekKey = getWeekKey(date);
+
+            if (!settings.usage.byWeek[weekKey]) {
+                settings.usage.byWeek[weekKey] = { input: 0, output: 0, total: 0, messageCount: 0 };
+            }
+            const weekData = settings.usage.byWeek[weekKey];
+            weekData.input += dayData.input || 0;
+            weekData.output += dayData.output || 0;
+            weekData.total += dayData.total || 0;
+            weekData.messageCount += dayData.messageCount || 0;
+        }
+        settings.migrationVersion = 2;
+        migrationNeeded = true;
+        console.log('[Token Usage Tracker] byWeek migration complete');
     }
 
     // Save migration changes to localStorage
     if (migrationNeeded) {
         saveSettings();
-        console.log('[Token Usage Tracker] Migrated byDay.models to new format and saved');
+        console.log('[Token Usage Tracker] Migrated data to new format and saved');
     }
 
     // Initialize session start time
@@ -361,18 +396,6 @@ class ErrorHandler {
     }
 
     /**
-     * Handle error with toast notification
-     * @param {string} message - User-friendly error message
-     * @param {Error} error - The error object
-     */
-    static notify(message, error) {
-        console.error(`[Token Usage Tracker] ${message}:`, error);
-        if (typeof toastr !== 'undefined') {
-            toastr.error(message);
-        }
-    }
-
-    /**
      * Silently handle error with logging only (no user notification)
      * @param {string} context - Where the error occurred
      * @param {Error} error - The error object
@@ -384,10 +407,6 @@ class ErrorHandler {
         return fallbackValue;
     }
 }
-
-// Legacy variables for backward compatibility
-let currencyRatesCache = null;
-let currencyCacheDate = null;
 
 /**
  * Get the current day key (YYYY-MM-DD)
@@ -412,12 +431,24 @@ function getHourKey(date = new Date()) {
 
 /**
  * Get the current week key (YYYY-WNN)
+ * Week runs Monday-Sunday (ISO 8601)
  */
 function getWeekKey(date = new Date()) {
-    const year = date.getFullYear();
-    const startOfYear = new Date(year, 0, 1);
-    const days = Math.floor((date.getTime() - startOfYear.getTime()) / CONFIG.MILLISECONDS_PER_DAY);
-    const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
+    // Create a copy to avoid mutating the original
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+
+    // Set to nearest Thursday: current date + 4 - current day number (Monday=1, Sunday=7)
+    const dayOfWeek = d.getUTCDay() || 7; // Convert Sunday from 0 to 7
+    d.setUTCDate(d.getUTCDate() + 4 - dayOfWeek);
+
+    // Get first day of the year
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+
+    // Calculate week number: days since Jan 1 / 7, rounded up
+    const weekNumber = Math.ceil((((d - yearStart) / CONFIG.MILLISECONDS_PER_DAY) + 1) / 7);
+
+    const year = d.getUTCFullYear();
+
     return `${year}-W${String(weekNumber).padStart(2, '0')}`;
 }
 
